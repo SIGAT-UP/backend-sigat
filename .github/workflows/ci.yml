@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  calidad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Dependencias
+        run: uv sync --frozen
+
+      - name: Formato
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Pruebas
+        run: uv run pytest
+
+      - name: Contrato OpenAPI
+        run: uv run python -m scripts.export_openapi
+
+      - name: Publicar contrato
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi
+          path: contracts/openapi.json
