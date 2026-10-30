@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.py text diff=python
+*.sql text
+*.json text
+contracts/openapi.json linguist-generated=true

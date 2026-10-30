@@ -1,0 +1,36 @@
+# Dependencias de ejecución de sigat-durazno-api (las mismas de pyproject.toml).
+# Instalar con:  pip install -r requirements.txt
+# La última línea instala el propio paquete (src/sigat_api) en modo editable para que
+# `uvicorn sigat_api.main:app`, `alembic` y `python -m sigat_api.cli` lo encuentren.
+
+# HTTP y contrato
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.8
+pydantic-settings>=2.4
+email-validator>=2.2
+python-multipart>=0.0.9
+orjson>=3.10
+
+# Base de datos SIGAT (PostgreSQL 16 + PostGIS)
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29
+geoalchemy2>=0.15
+shapely>=2.0
+alembic>=1.13
+
+# Seguridad: JWT y hash de contraseñas (argon2id)
+pyjwt[crypto]>=2.9
+argon2-cffi>=23.1
+
+# Huella de contenido (JSON canónico RFC 8785) para la idempotencia del sync
+rfc8785>=0.1.4
+
+# Almacenamiento de objetos (S3 compatible) y cola de trabajo sobre PostgreSQL
+aioboto3>=13.0
+procrastinate>=2.0
+
+# Observabilidad
+structlog>=24.1
+
+-e .

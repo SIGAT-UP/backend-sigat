@@ -1,51 +1,32 @@
-"""Entorno de migraciones de Alembic.
+"""Entorno de Alembic. Lee la URL de ``SIGAT_DB_URL`` (nunca de alembic.ini)."""
 
-La URL se toma de la configuración de la aplicación (DATABASE_URL), no del
-alembic.ini, para que no haya credenciales en el repositorio.
-"""
-
+import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from ica_api.core.config import get_settings
+from sigat_api.config import obtener_configuracion
 
-config = context.config
-
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-# Escapar % para que configparser no interprete la contraseña como interpolación.
-config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
-
-target_metadata = None
+if context.config.config_file_name is not None:
+    fileConfig(context.config.config_file_name)
 
 
-def run_migrations_offline() -> None:
-    context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
+def _ejecutar(conexion) -> None:  # type: ignore[no-untyped-def]
+    context.configure(connection=conexion, version_table_schema="api", include_schemas=True)
     with context.begin_transaction():
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
+async def _en_linea() -> None:
+    motor = create_async_engine(obtener_configuracion().db_url)
+    async with motor.begin() as con:
+        await con.execute(text("CREATE SCHEMA IF NOT EXISTS api"))
+        await con.run_sync(_ejecutar)
+    await motor.dispose()
 
 
 if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+    raise SystemExit("Use el modo en línea: alembic upgrade head")
+asyncio.run(_en_linea())
