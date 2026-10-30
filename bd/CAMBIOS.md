@@ -125,6 +125,23 @@ Para mantener una estructura organizada y consistente:
 - Mantener sincronizados los scripts SQL y las migraciones correspondientes.
 - Verificar los cambios antes de integrarlos a la rama principal.
 
+## Historial de migraciones
+
+### Revisión `0001` — Esquema institucional SIGAT v9
+
+Establece la línea base de la base de datos SIGAT v9. Cuando el esquema está vacío, ejecuta los scripts SQL institucionales en el orden definido. Si la estructura v9 ya existe, registra la revisión sin reconstruirla. Si encuentra una versión incompatible, detiene el proceso para evitar modificaciones no controladas.
+
+### Revisión `0002` — Esquema técnico de sesiones API
+
+Crea el esquema `api` y las tablas técnicas necesarias para gestionar sesiones de actualización de tokens e intentos de inicio de sesión. Incluye relaciones con usuarios y dispositivos, restricciones de validación e índices para las consultas.
+
+### Revisión `0003` — Categoría de solicitudes de cuenta
+
+Incorpora la categoría `solicitudes_cuenta` al catálogo de notificaciones. Permite identificar los avisos relacionados con solicitudes de recuperación de acceso. La operación es idempotente y no elimina categorías ni notificaciones existentes.
+
+### Consideraciones de revisión
+
+Las modificaciones de restricciones de `operacion_sync` en los ajustes v8 y v9 amplían los valores permitidos para incorporar nuevas entidades sincronizables. Como utilizan `DROP CONSTRAINT` seguido de `ADD CONSTRAINT`, deben contar con revisión técnica y aprobación del responsable de la base de datos antes de integrarse.
 ---
 
 **SIGAT — Sistema de Información para la Gestión y Análisis de la Vigilancia Fitosanitaria.**
