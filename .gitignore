@@ -1,16 +1,109 @@
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-coverage.xml
+# =============================================================================
+# sigat-durazno-api · .gitignore
+# Regla: el repositorio contiene código y lo que el código genera de forma
+# determinista (migraciones, pruebas, contracts/openapi.json). Nunca secretos,
+# datos reales, binarios de evidencia ni artefactos de entorno.
+# =============================================================================
+
+# --- Secretos y configuración local (NUNCA se suben) -------------------------
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credenciales/
+**/service-account*.json
+
+# --- Python: bytecode y empaquetado ------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 build/
 dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.whl
+
+# --- Entornos virtuales --------------------------------------------------------
+.venv/
+venv/
+env/
+.python-env/
+.pdm-python
+.pdm-build/
+__pypackages__/
+
+# --- Herramientas de calidad y pruebas -----------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+.import_linter_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+reportes/
+.hypothesis/
+.tox/
+.nox/
+
+# --- Datos: nada de datos reales ni volcados en el repo -----------------------
+# El esquema SIGAT lo entrega el paquete de BD; aquí no se versionan volcados.
+*.dump
+*.backup
+*.bak
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.db
+*.mbtiles
+*.pmtiles
+data/
+datos/
+volcados/
+
+# --- Almacenamiento local de objetos (MinIO de desarrollo, evidencias) --------
+.almacen/
+almacen_local/
+uploads/
+evidencias/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.pdf
+*.docx
+!docs/**/*.png
+
+# --- Logs y procesos ----------------------------------------------------------
+*.log
+logs/
+*.pid
+
+# --- Contenedores locales -----------------------------------------------------
+docker-compose.override.yml
+.docker/
+
+# --- Editores y sistema operativo ----------------------------------------------
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Contrato: el openapi.json SÍ se versiona (lo publica el servidor) --------
+# contracts/openapi.json  <- NO ignorar
+contracts/*.tmp.json
+contracts/diff/

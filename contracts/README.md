@@ -1,11 +1,13 @@
-# Contratos
+# Contrato OpenAPI
 
-Aquí se publica el `openapi.json` generado por la API. Es el único artefacto
-que cruza a los repositorios de la web y del móvil.
+`openapi.json` es el **único artefacto** que cruza del backend a los fronts (Arquitectura §9.1, ADR-16).
+Se genera desde el código con `make contrato` y la CI falla si no coincide (`make contrato-verificar`).
 
-```bash
-uv run python -m scripts.export_openapi
-```
+Cómo lo consumen los fronts:
+* **Móvil (Flutter)**: fija una copia versionada en `lib/contracts/openapi.json` y genera el cliente
+  (`openapi-generator-cli generate -g dart-dio`). No editar el cliente generado.
+* **Web (React)**: `npx openapi-typescript contracts/openapi.json -o src/data/http/api.d.ts`
+  y escribe los repositorios de `src/data/http/` sobre esos tipos.
 
-El archivo se versiona con la etiqueta del release (`openapi-0.1.0.json`) y los
-clientes lo fijan; no se edita a mano.
+Un cambio incompatible (quitar campo, cambiar tipo, endurecer validación) rompe la app ya instalada en
+campo: se versiona (`/api/v2`) o se hace aditivo.
