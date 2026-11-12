@@ -188,8 +188,8 @@ def servicio_sincronizacion(
     )
 
 
-def servicio_revision(con: ConexionDep) -> ServicioRevision:
-    return ServicioRevision(RepositorioRegistro(con), _reloj())
+def servicio_revision(con: ConexionDep, cfg: Configuracion = Depends(configuracion)) -> ServicioRevision:
+    return ServicioRevision(RepositorioRegistro(con), _reloj(), cfg.sync_umbral_deriva_reloj_seg)
 
 
 def servicio_consulta_registro(con: ConexionDep) -> ServicioConsultaRegistro:
