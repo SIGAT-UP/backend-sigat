@@ -110,3 +110,5 @@ contracts/diff/
 
 # --- Scripts locales de prueba (no forman parte del producto) -----------------
 scripts/dev/
+scripts/generar_vectores_huella.py
+tests/vectores_huella.json

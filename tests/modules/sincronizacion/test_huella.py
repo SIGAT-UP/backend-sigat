@@ -3,9 +3,7 @@
 Los vectores son compartidos con el móvil y deben ser idénticos byte a byte.
 """
 
-import json
 from datetime import UTC, datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -14,22 +12,130 @@ import pytest
 from sigat_api.modules.sincronizacion import esquemas as e
 from sigat_api.modules.sincronizacion import huella
 
-VECTORES = Path(__file__).resolve().parents[2] / "vectores_huella.json"
+# Hashes esperados del contrato compartido con el móvil (R-T4, RN-010). No se
+# recalculan aquí: si el algoritmo cambia, esta prueba debe fallar.
+VECTORES: list[dict[str, Any]] = [
+    {
+        "nombre": "lectura simple",
+        "contenido": {
+            "entidad": "lectura_trampa",
+            "accion": "crear",
+            "registro_id": "0190f5b0-0000-7000-8000-0000000000b1",
+            "version": 1,
+            "linaje": "inspeccion_oficial",
+            "t_observacion": "2026-03-01T13:15:30.250Z",
+            "datos": {
+                "visi_id": "0190f5b0-0000-7000-8000-0000000000a0",
+                "tram_id": 11,
+                "cond_id": 1,
+                "lect_leida": True,
+                "lect_especimenes": 4,
+                "lect_justificacion": None,
+            },
+        },
+        "hash": "43a8396af58e26b1e8f5bd6bbad24f830ab04566cb03da4d7221d28a26849731",
+    },
+    {
+        "nombre": "visita con varios lotes y nulos",
+        "contenido": {
+            "entidad": "visita",
+            "accion": "crear",
+            "registro_id": "0190f5b0-0000-7000-8000-0000000000a0",
+            "version": 1,
+            "linaje": None,
+            "t_observacion": "2026-03-02T09:00:00.000Z",
+            "datos": {
+                "pred_id": 3,
+                "lote_ids": [42, 43],
+                "ruta_id": None,
+                "visi_t_inicio_obs": "2026-03-02T08:40:00.000Z",
+                "visi_t_fin_obs": "2026-03-02T09:00:00.000Z",
+            },
+        },
+        "hash": "6f5dcb27b553cba96ebb9e737cbb97920f0aa407565fc55dc64d9a26ca70bb79",
+    },
+    {
+        "nombre": "decimales, unicode y orden de claves",
+        "contenido": {
+            "t_observacion": "2026-03-03T08:30:15.500Z",
+            "datos": {
+                "zona": "Trampa «A» ñ",
+                "lect_precision_m": 1.0,
+                "lect_observaciones": "Borde del lote — revisar",
+                "atra_id": 2,
+                "lect_leida": False,
+                "lect_especimenes": None,
+                "lect_justificacion": "Cebo seco",
+                "smalls": 1e-06,
+                "tiny": 1e-07,
+            },
+            "linaje": "inspeccion_oficial",
+            "version": 1,
+            "registro_id": "0190f5b0-0000-7000-8000-0000000000b2",
+            "accion": "crear",
+            "entidad": "lectura_trampa",
+        },
+        "hash": "ed5e8f45ca91fa5fda6a0b75bfa5b45e95994101d4652f049b0f6d0d9366fcab",
+    },
+    {
+        "nombre": "corrección de versión 2",
+        "contenido": {
+            "entidad": "lectura_trampa",
+            "accion": "corregir",
+            "registro_id": "0190f5b0-0000-7000-8000-0000000000b3",
+            "version": 2,
+            "linaje": "inspeccion_oficial",
+            "t_observacion": "2026-03-04T17:00:00.000Z",
+            "datos": {
+                "visi_id": "0190f5b0-0000-7000-8000-0000000000a0",
+                "tram_id": 12,
+                "cond_id": 2,
+                "lect_leida": True,
+                "lect_especimenes": 0,
+                "lect_motivo_correccion": "Se contaron de nuevo",
+            },
+        },
+        "hash": "21321e345e5614768d7e4c48c07eba2cbb1b3f186cf7bc112ac49c6bdf45b49a",
+    },
+    {
+        "nombre": "anulación",
+        "contenido": {
+            "entidad": "lectura_trampa",
+            "accion": "anular",
+            "registro_id": "0190f5b0-0000-7000-8000-0000000000b4",
+            "version": 3,
+            "linaje": "inspeccion_oficial",
+            "t_observacion": "2026-03-05T06:45:00.000Z",
+            "datos": {
+                "visi_id": "0190f5b0-0000-7000-8000-0000000000a0",
+                "tram_id": 13,
+                "cond_id": 1,
+                "lect_leida": True,
+                "lect_especimenes": 7,
+                "lect_motivo_anulacion": "Trampa mal identificada",
+            },
+        },
+        "hash": "afada6776cce04197e4749d3a58b329ce223370bc3791ef4e332ccce9db7e40f",
+    },
+]
 
-
-def _documento() -> dict[str, Any]:
-    return json.loads(VECTORES.read_text(encoding="utf-8"))
+NORMALIZACION: list[dict[str, str]] = [
+    {"entrada": "2026-03-01T08:15:30.250-05:00", "canonica": "2026-03-01T13:15:30.250Z"},
+    {"entrada": "2026-03-03T10:30:15.500+02:00", "canonica": "2026-03-03T08:30:15.500Z"},
+    {"entrada": "2026-03-02T09:00:00.000Z", "canonica": "2026-03-02T09:00:00.000Z"},
+    {"entrada": "2026-03-02T04:00:00.123456Z", "canonica": "2026-03-02T04:00:00.123Z"},
+]
 
 
 @pytest.mark.regla
-@pytest.mark.parametrize("vector", _documento()["vectores"], ids=lambda v: v["nombre"])
+@pytest.mark.parametrize("vector", VECTORES, ids=lambda v: v["nombre"])
 def test_vector_de_huella(vector: dict[str, Any]) -> None:
     """Mismo contenido canónico -> mismo hash, con el orden de claves de entrada irrelevante."""
     assert huella.calcular(vector["contenido"]) == vector["hash"]
 
 
 @pytest.mark.regla
-@pytest.mark.parametrize("vector", _documento()["normalizacion_instante"], ids=lambda v: v["entrada"])
+@pytest.mark.parametrize("vector", NORMALIZACION, ids=lambda v: v["entrada"])
 def test_normalizacion_del_instante(vector: dict[str, str]) -> None:
     """El instante se canoniza a UTC con milisegundos y sufijo ``Z`` (Python y Dart coinciden)."""
     entrada = datetime.fromisoformat(vector["entrada"].replace("Z", "+00:00"))

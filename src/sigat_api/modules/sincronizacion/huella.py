@@ -17,8 +17,8 @@ Algoritmo (el MÓVIL debe implementar EXACTAMENTE el mismo):
 Normalización del instante (decisión del Sprint 2): ``2026-11-14T10:00:00-05:00`` y
 ``2026-11-14T15:00:00Z`` producen el MISMO texto canónico ``2026-11-14T15:00:00.000Z``.
 Así Python y Dart no dependen de cómo cada uno imprime la zona horaria. Los vectores
-compartidos viven en ``tests/vectores_huella.json`` (backend) y ``test/vectores_huella.json``
-(móvil) y deben ser idénticos.
+compartidos viven en ``tests/modules/sincronizacion/test_huella.py`` (backend) y
+``test/canonical_json_test.dart`` (móvil) y deben coincidir.
 """
 
 import hashlib
