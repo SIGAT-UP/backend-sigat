@@ -110,7 +110,7 @@ def test_actualizar_base_v9_existente_no_pierde_datos(h: SimpleNamespace) -> Non
         # Volver a aplicar no cambia nada.
         r = h.alembic(nombre, "upgrade", "head")
         assert r.returncode == 0, r.stderr
-        assert h.consulta(nombre, "SELECT version_num FROM api.alembic_version") == [("0009",)]
+        assert h.consulta(nombre, "SELECT version_num FROM api.alembic_version") == [("0010",)]
     finally:
         h.borrar_bd(nombre)
 

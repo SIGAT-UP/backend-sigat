@@ -500,7 +500,7 @@ def test_actualizar_a_0007_con_datos_que_incumplen_no_toca_filas_y_avisa(h: Simp
 
         r = h.alembic(nombre, "upgrade", "head")
         assert r.returncode == 0, r.stderr
-        assert h.consulta(nombre, "SELECT version_num FROM api.alembic_version") == [("0009",)]
+        assert h.consulta(nombre, "SELECT version_num FROM api.alembic_version") == [("0010",)]
         assert h.consulta(nombre, TABLA_COSECHA) == antes
         assert set(h.consulta(nombre, OBJETOS)) == DISPARADORES_PREVIOS | {
             ("funcion", "fn_cosecha_una_abierta"),

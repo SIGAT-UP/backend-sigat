@@ -20,4 +20,5 @@
 \ir 06_validacion.sql
 \ir 17_vistas_informe_local.sql
 \ir 18_vista_notificacion_app.sql
+\ir 19_ampliacion_v_planificacion.sql
 \echo 'SIGAT v9 instalado (sin cuentas de usuario: cree el primer administrador con el backend).'
