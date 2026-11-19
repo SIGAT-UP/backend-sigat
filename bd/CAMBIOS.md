@@ -203,6 +203,14 @@ Ejecuta `bd/sql/17_vistas_informe_local.sql`, también incluido en `00_instalar_
 - Las vistas **no** son un mecanismo de autorización: devuelven todas las filas. El backend debe consultar solo con el filtro del usuario del token.
 - `downgrade` elimina las cuatro vistas y restaura la función sin la guarda (cuerpo de `04_funciones.sql` de la revisión 0001).
 
+### Revisión `0009` — Vista de la bandeja de avisos (F6)
+
+Ejecuta `bd/sql/18_vista_notificacion_app.sql`, también incluido en `00_instalar_todo.sql`. **Solo agrega** la vista `v_notificacion_app` (ET §3.2.7, pantallas PW06b y P06-P); no crea ni modifica tablas, columnas, restricciones, índices ni datos. Es idempotente (`CREATE OR REPLACE`).
+
+- Columnas: las de `notificacion` (`noti_id`, `usua_id`, título, cuerpo, destino, `noti_creada_en`, `noti_leida_en`), `cate_codigo` y `cate_descripcion` de `categoria_notificacion`, y `no_leida` (`noti_leida_en IS NULL`).
+- La vista devuelve todas las filas: el backend la consulta siempre con `usua_id` = usuario del token (`RepositorioNotificaciones.listar`). Marcar como leído sigue siendo un `UPDATE` de `notificacion.noti_leida_en`; nunca se borra la fila.
+- `downgrade` elimina solo la vista.
+
 ### Consideraciones de revisión
 
 Las modificaciones de restricciones de `operacion_sync` en los ajustes v8 y v9 amplían los valores permitidos para incorporar nuevas entidades sincronizables. Como utilizan `DROP CONSTRAINT` seguido de `ADD CONSTRAINT`, deben contar con revisión técnica y aprobación del responsable de la base de datos antes de integrarse.

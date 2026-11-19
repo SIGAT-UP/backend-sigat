@@ -19,4 +19,5 @@
 \ir 16_regla_cosecha_abierta.sql
 \ir 06_validacion.sql
 \ir 17_vistas_informe_local.sql
+\ir 18_vista_notificacion_app.sql
 \echo 'SIGAT v9 instalado (sin cuentas de usuario: cree el primer administrador con el backend).'

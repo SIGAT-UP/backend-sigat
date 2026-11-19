@@ -9,10 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from sigat_api.compartido.errores import NoImplementado
 
 _COLUMNAS = """
-SELECT n.noti_id, c.cate_codigo, n.noti_titulo, n.noti_cuerpo, n.noti_creada_en, n.noti_leida_en,
+SELECT n.noti_id, n.cate_codigo, n.noti_titulo, n.noti_cuerpo, n.noti_creada_en, n.noti_leida_en,
        n.noti_destino_ruta, n.noti_destino_argumento
-  FROM sigat.notificacion n
-  JOIN sigat.categoria_notificacion c ON c.cate_id = n.cate_id
+  FROM sigat.v_notificacion_app n
 """
 
 
@@ -29,7 +28,7 @@ class RepositorioNotificaciones:
                 _COLUMNAS
                 + """
  WHERE n.usua_id = :u
-   AND (NOT :solo OR n.noti_leida_en IS NULL)
+   AND (NOT :solo OR n.no_leida)
    AND (CAST(:antes AS bigint) IS NULL OR n.noti_id < CAST(:antes AS bigint))
  ORDER BY n.noti_id DESC
  LIMIT :lim"""
