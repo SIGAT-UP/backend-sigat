@@ -2,10 +2,10 @@
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from sigat_api.compartido.esquemas import Esquema
 from sigat_api.compartido.tipos import AccionSync, EstadoRevision, EstadoRevisionLectura, Linaje
@@ -187,7 +187,16 @@ class NuevaAplicacion(Esquema):
     pers_cc_responsable: int | None = None
     apli_responsable_nombre: str | None = Field(None, max_length=150)
     apli_observaciones: str | None = Field(None, max_length=1000)
-    t_observacion: datetime
+    t_observacion: AwareDatetime
+
+    @model_validator(mode="after")
+    def _producto_y_responsable(self) -> Self:
+        """Los mismos CHECK de la BD: producto y responsable presentes."""
+        if self.prof_id is None and not (self.apli_producto_texto or "").strip():
+            raise ValueError("Indique el producto del catálogo o escríbalo.")
+        if self.pers_cc_responsable is None and not (self.apli_responsable_nombre or "").strip():
+            raise ValueError("Indique la cédula o el nombre del responsable de la aplicación.")
+        return self
 
 
 class Cosecha(Esquema):
@@ -218,7 +227,14 @@ class NuevaCosecha(Esquema):
     cose_volumen_uni_id: int
     cose_metodo_registro: str | None = Field(None, max_length=100)
     cose_observaciones: str | None = Field(None, max_length=1000)
-    t_observacion: datetime
+    t_observacion: AwareDatetime
+
+    @model_validator(mode="after")
+    def _real_completa(self) -> Self:
+        """CHECK cosecha_real_completa: fecha y volumen reales van juntos."""
+        if (self.cose_fecha_real is None) != (self.cose_volumen_real is None):
+            raise ValueError("La fecha y el volumen reales se registran juntos.")
+        return self
 
 
 class NuevaVersionAutorreporte(Esquema):

@@ -42,6 +42,93 @@ _COLUMNAS_LECTURA_SERVIDOR = {
     "lect_deriva_reloj_seg",
 }
 
+COLUMNAS_APLICACION = frozenset(
+    {
+        "lote_id",
+        "prof_id",
+        "apli_producto_texto",
+        "apli_dosis",
+        "apli_dosis_uni_id",
+        "apli_area_tratada",
+        "apli_area_uni_id",
+        "pers_cc_responsable",
+        "apli_responsable_nombre",
+        "apli_observaciones",
+        "apli_t_observacion",
+    }
+)
+COLUMNAS_COSECHA = frozenset(
+    {
+        "lote_id",
+        "cose_fecha_esperada",
+        "cose_volumen_esperado",
+        "cose_fecha_real",
+        "cose_volumen_real",
+        "cose_volumen_uni_id",
+        "cose_metodo_registro",
+        "cose_observaciones",
+        "cose_t_observacion",
+    }
+)
+_COLUMNAS_VERSION_SERVIDOR = {
+    "aplicacion_fitosanitaria": ("apli", "apli_id"),
+    "cosecha": ("cose", "cose_id"),
+}
+
+
+def _columnas_versionadas(entidad: str) -> tuple[frozenset[str], str]:
+    if entidad == "lectura_trampa":
+        return _COLUMNAS_LECTURA | _COLUMNAS_LECTURA_SERVIDOR, "lect_id"
+    if entidad in _COLUMNAS_VERSION_SERVIDOR:
+        prefijo, clave = _COLUMNAS_VERSION_SERVIDOR[entidad]
+        propias = COLUMNAS_APLICACION if entidad == "aplicacion_fitosanitaria" else COLUMNAS_COSECHA
+        servidor = {"usua_id", "disp_id", "oper_id"} | {
+            f"{prefijo}_{c}"
+            for c in (
+                "registro_id",
+                "version",
+                "linaje",
+                "t_captura",
+                "deriva_reloj_seg",
+                "anulada",
+                "motivo_anulacion",
+            )
+        }
+        return propias | servidor, clave
+    raise ValueError(f"Entidad versionada no soportada: {entidad}")
+
+
+_SELECT_APLICACION = """
+SELECT a.apli_id, a.apli_registro_id, a.apli_version, a.lote_id, l.lote_descripcion, a.prof_id,
+       coalesce(pf.prof_nombre, a.apli_producto_texto) AS producto,
+       a.apli_dosis, ud.unid_simbolo AS dosis_unidad, a.apli_area_tratada, ua.unid_simbolo AS area_unidad,
+       coalesce(a.apli_responsable_nombre, pe.pers_nombre || ' ' || pe.pers_apellido) AS responsable,
+       a.apli_observaciones, a.apli_linaje AS linaje, a.apli_t_observacion AS t_observacion,
+       a.apli_t_captura AS t_captura, a.apli_t_sincronizacion AS t_sincronizacion, a.apli_anulada AS anulada
+  FROM sigat.aplicacion_fitosanitaria a
+  JOIN sigat.lote l ON l.lote_id = a.lote_id
+  JOIN sigat.unidad_medida ud ON ud.unid_id = a.apli_dosis_uni_id
+  JOIN sigat.unidad_medida ua ON ua.unid_id = a.apli_area_uni_id
+  LEFT JOIN sigat.producto_fitosanitario pf ON pf.prof_id = a.prof_id
+  LEFT JOIN sigat.persona pe ON pe.pers_cc = a.pers_cc_responsable
+ WHERE a.apli_registro_id = :r
+ ORDER BY a.apli_version DESC
+ LIMIT 1
+"""
+
+_SELECT_COSECHA = """
+SELECT c.cose_id, c.cose_registro_id, c.cose_version, c.lote_id, l.lote_descripcion,
+       c.cose_fecha_esperada, c.cose_volumen_esperado, c.cose_fecha_real, c.cose_volumen_real,
+       u.unid_simbolo AS unidad, c.cose_metodo_registro, c.cose_observaciones,
+       c.cose_linaje AS linaje, c.cose_t_observacion AS t_observacion, c.cose_anulada AS anulada
+  FROM sigat.cosecha c
+  JOIN sigat.lote l ON l.lote_id = c.lote_id
+  JOIN sigat.unidad_medida u ON u.unid_id = c.cose_volumen_uni_id
+ WHERE c.cose_registro_id = :r
+ ORDER BY c.cose_version DESC
+ LIMIT 1
+"""
+
 Clave = tuple[datetime, UUID, int | None]
 
 # ``:u`` = actor, ``:solo_propias`` = el actor es técnico. ``{v}`` = alias de la tabla visita.
@@ -329,20 +416,36 @@ SELECT EXISTS (
         )
 
     async def insertar_version(self, entidad: str, fila: dict[str, Any]) -> UUID:
-        if entidad != "lectura_trampa":
-            raise ValueError(f"Entidad versionada no soportada por el sprint: {entidad}")
-        columnas = [c for c in fila if c in _COLUMNAS_LECTURA | _COLUMNAS_LECTURA_SERVIDOR]
+        permitidas, clave = _columnas_versionadas(entidad)
+        columnas = [c for c in fila if c in permitidas]
         if not columnas:
-            raise ValueError("La lectura no trae columnas que se puedan insertar")
+            raise ValueError(f"La fila de {entidad} no trae columnas que se puedan insertar")
         lista = ", ".join(columnas)
         valores = ", ".join(f":{c}" for c in columnas)
-        lect_id = await self._con.scalar(
+        nuevo_id = await self._con.scalar(
             text(
-                f"INSERT INTO sigat.lectura_trampa ({lista}) VALUES ({valores}) RETURNING lect_id",  # noqa: S608
+                f"INSERT INTO sigat.{entidad} ({lista}) VALUES ({valores}) RETURNING {clave}",  # noqa: S608
             ),
             {c: fila[c] for c in columnas},
         )
-        return UUID(str(lect_id))
+        return UUID(str(nuevo_id))
+
+    async def autorreporte_original(self, entidad: str, registro_id: UUID) -> dict[str, Any] | None:
+        """Versión 1 del registro lógico con su autor: base para reconocer un reintento del alta."""
+        prefijo, _ = _COLUMNAS_VERSION_SERVIDOR[entidad]
+        propias = COLUMNAS_APLICACION if entidad == "aplicacion_fitosanitaria" else COLUMNAS_COSECHA
+        lista = ", ".join(sorted(propias | {"usua_id"}))
+        return await self._fila(
+            f"SELECT {lista} FROM sigat.{entidad}"  # noqa: S608
+            f" WHERE {prefijo}_registro_id = :r AND {prefijo}_version = 1",
+            {"r": registro_id},
+        )
+
+    async def aplicacion_vigente(self, registro_id: UUID) -> dict[str, Any] | None:
+        return await self._fila(_SELECT_APLICACION, {"r": registro_id})
+
+    async def cosecha_vigente(self, registro_id: UUID) -> dict[str, Any] | None:
+        return await self._fila(_SELECT_COSECHA, {"r": registro_id})
 
     async def insertar_visita(self, fila: dict[str, Any], lote_ids: list[int]) -> None:
         await self._con.execute(

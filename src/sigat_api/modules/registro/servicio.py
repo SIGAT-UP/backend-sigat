@@ -1,5 +1,6 @@
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -136,13 +137,70 @@ class ServicioRegistro:
 
     # --- escrituras en línea de la web (pasan por el mismo camino) ---------------------------
     async def registrar_aplicacion(self, actor: Actor, s: e.NuevaAplicacion) -> e.Aplicacion:
-        """Productor desde la web (``registerApplication``). Construye una ``OperacionCampo`` con
-        ``PuertoOperaciones.registrar_operacion_en_linea`` y llama a ``aplicar``. Linaje autorreporte."""
-        raise NoImplementado("Registrar aplicación")
+        """Alta web del productor (HU-01). Reenviar el mismo ``apli_registro_id`` y contenido no duplica."""
+        propios = s.model_dump(exclude={"apli_registro_id", "t_observacion"})
+        propios["apli_t_observacion"] = s.t_observacion
+        await self._registrar_autorreporte(
+            actor, "aplicacion_fitosanitaria", "apli", s.apli_registro_id, s.lote_id, s.t_observacion, propios
+        )
+        fila = await self._repo.aplicacion_vigente(s.apli_registro_id)
+        if fila is None:
+            raise NoEncontrado("La aplicación no existe.", codigo="APLICACION_NO_ENCONTRADA")
+        return e.Aplicacion(**fila)
 
     async def registrar_cosecha(self, actor: Actor, s: e.NuevaCosecha) -> e.Cosecha:
-        """Web ``saveHarvest``: si ya existe la cosecha del lote, el front usa ``nueva_version_cosecha``."""
-        raise NoImplementado("Registrar cosecha")
+        """Alta web del productor. P-04 (una cosecha abierta por lote) la impone la BD -> 409."""
+        propios = s.model_dump(exclude={"cose_registro_id", "t_observacion"})
+        propios["cose_t_observacion"] = s.t_observacion
+        await self._registrar_autorreporte(
+            actor, "cosecha", "cose", s.cose_registro_id, s.lote_id, s.t_observacion, propios
+        )
+        fila = await self._repo.cosecha_vigente(s.cose_registro_id)
+        if fila is None:
+            raise NoEncontrado("La cosecha no existe.", codigo="COSECHA_NO_ENCONTRADA")
+        return e.Cosecha(**fila)
+
+    async def _registrar_autorreporte(
+        self,
+        actor: Actor,
+        entidad: str,
+        prefijo: str,
+        registro_id: UUID,
+        lote_id: int,
+        t_observacion: datetime,
+        propios: dict[str, Any],
+    ) -> None:
+        original = await self._repo.autorreporte_original(entidad, registro_id)
+        if original is not None:
+            if original["usua_id"] == actor.usua_id and all(original[k] == v for k, v in propios.items()):
+                return
+            raise Conflicto(
+                "Ya existe un registro con ese identificador y otro contenido.", codigo="REGISTRO_EXISTENTE"
+            )
+
+        ahora = self._reloj.ahora()
+        motivo = await self._validador.validar_alta_autorreporte(lote_id, t_observacion, ahora, actor)
+        if motivo == MotivoRechazo.SIN_PERMISO_SOBRE_LOTE:
+            raise NoEncontrado("El lote no existe.", codigo="LOTE_NO_ENCONTRADO")
+        if motivo is not None:
+            raise ReglaNegocio(MENSAJES[motivo], codigo=motivo.value)
+
+        oper_id = await self._operaciones.registrar_operacion_en_linea(
+            actor, entidad, AccionSync.CREAR.value, str(registro_id), 1, _serializable(propios), ahora
+        )
+        await self._repo.insertar_version(
+            entidad,
+            {
+                **propios,
+                f"{prefijo}_registro_id": registro_id,
+                f"{prefijo}_version": 1,
+                f"{prefijo}_linaje": dominio.linaje_de(actor).value,
+                f"{prefijo}_t_captura": ahora,
+                "usua_id": actor.usua_id,
+                "disp_id": actor.disp_id,
+                "oper_id": oper_id,
+            },
+        )
 
     async def nueva_version_aplicacion(
         self, actor: Actor, registro_id: UUID, s: e.NuevaVersionAutorreporte
@@ -513,3 +571,15 @@ def _instante(valor: object) -> datetime:
     if isinstance(valor, datetime):
         return valor
     return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+
+
+def _serializable(valores: dict[str, Any]) -> dict[str, object]:
+    """JSON canónico para la huella de ``operacion_sync`` (RFC 8785 no admite Decimal ni fechas)."""
+    return {
+        clave: valor.isoformat()
+        if isinstance(valor, date)
+        else str(valor)
+        if isinstance(valor, Decimal)
+        else valor
+        for clave, valor in valores.items()
+    }
