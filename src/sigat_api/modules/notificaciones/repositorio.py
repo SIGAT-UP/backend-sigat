@@ -9,10 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from sigat_api.compartido.errores import NoImplementado
 
 _COLUMNAS = """
-SELECT n.noti_id, c.cate_codigo, n.noti_titulo, n.noti_cuerpo, n.noti_creada_en, n.noti_leida_en,
+SELECT n.noti_id, n.cate_codigo, n.noti_titulo, n.noti_cuerpo, n.noti_creada_en, n.noti_leida_en,
        n.noti_destino_ruta, n.noti_destino_argumento
-  FROM sigat.notificacion n
-  JOIN sigat.categoria_notificacion c ON c.cate_id = n.cate_id
+  FROM sigat.v_notificacion_app n
 """
 
 
@@ -21,20 +20,23 @@ class RepositorioNotificaciones:
         self._con = con
 
     async def listar(
-        self, usua_id: int, solo_no_leidas: bool, antes_de: int | None, limite: int
+        self, usua_id: int, despues_de: tuple[datetime, int] | None, limite: int
     ) -> list[dict[str, Any]]:
-        """Más reciente primero; paginación por ``noti_id`` (``antes_de`` = último id recibido)."""
+        """Bandeja: solo no leídas, de la más reciente a la más antigua. ``despues_de`` es la clave
+        (creada_en, noti_id) de la última fila entregada; un aviso leído entre páginas no las desplaza."""
+        creada, noti = despues_de or (None, None)
         filas = await self._con.execute(
             text(
                 _COLUMNAS
                 + """
  WHERE n.usua_id = :u
-   AND (NOT :solo OR n.noti_leida_en IS NULL)
-   AND (CAST(:antes AS bigint) IS NULL OR n.noti_id < CAST(:antes AS bigint))
- ORDER BY n.noti_id DESC
+   AND n.no_leida
+   AND (CAST(:c_t AS timestamptz) IS NULL
+        OR (n.noti_creada_en, n.noti_id) < (CAST(:c_t AS timestamptz), CAST(:c_id AS bigint)))
+ ORDER BY n.noti_creada_en DESC, n.noti_id DESC
  LIMIT :lim"""
             ),
-            {"u": usua_id, "solo": solo_no_leidas, "antes": antes_de, "lim": limite},
+            {"u": usua_id, "c_t": creada, "c_id": noti, "lim": limite},
         )
         return [dict(f) for f in filas.mappings()]
 

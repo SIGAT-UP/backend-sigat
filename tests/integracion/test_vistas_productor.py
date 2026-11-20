@@ -534,7 +534,7 @@ def test_downgrade_elimina_solo_sus_objetos_y_se_puede_reaplicar(h: SimpleNamesp
         r = h.alembic(nombre, "upgrade", "head")
         assert r.returncode == 0, r.stderr
         assert set(h.consulta(nombre, OBJETOS)) == completo
-        assert h.consulta(nombre, "SELECT version_num FROM api.alembic_version") == [("0008",)]
+        assert h.consulta(nombre, "SELECT version_num FROM api.alembic_version") == [("0010",)]
     finally:
         h.borrar_bd(nombre)
 

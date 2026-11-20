@@ -110,12 +110,22 @@ async def guardar_preferencias(
 
 
 @router.get(
-    "/notificaciones", response_model=Pagina[en.Notificacion], summary="Mis avisos (más reciente primero)"
+    "/notificaciones",
+    response_model=Pagina[en.Notificacion],
+    summary="Mi bandeja: avisos no leídos, más reciente primero",
 )
 async def notificaciones(
-    actor: ActorDep, svc: Notis, cursor: Cursor = None, no_leidas: Annotated[bool, Query()] = False
+    actor: ActorDep,
+    svc: Notis,
+    cursor: Cursor = None,
+    no_leidas: Annotated[
+        bool,
+        Query(
+            deprecated=True, description="Sin efecto: la bandeja devuelve siempre solo los avisos no leídos."
+        ),
+    ] = True,
 ) -> Pagina[en.Notificacion]:
-    return await svc.listar(actor, no_leidas, cursor)
+    return await svc.listar(actor, cursor)
 
 
 @router.get("/notificaciones/conteo", response_model=en.ConteoNoLeidas, summary="Número de avisos sin leer")
