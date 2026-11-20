@@ -1,4 +1,4 @@
-"""POST /aplicaciones y POST /cosechas (HU-01) contra PostgreSQL REAL, por la API.
+"""Autorreportes web (HU-01): alta, versiones y listados de aplicaciones y cosechas, contra PostgreSQL REAL.
 
 Requiere ``SIGAT_DB_URL_PRUEBAS`` (ver ``conftest.py``). Usa bases TEMPORALES que se borran al final.
 Ana (productora) tiene los lotes 11 y 12; Bruno, el 21. Los tokens se emiten como lo hace el login.
@@ -20,7 +20,8 @@ from sigat_api.compartido.tipos import Cliente, RolCodigo
 pytestmark = pytest.mark.integracion
 
 P = "/api/v1"
-TECNICO, ANA = 1, 2
+TECNICO, ANA, BRUNO = 1, 2, 3
+DISP_BRUNO = "00000000-0000-0000-0000-0000000000d3"
 DISP_ANA = "00000000-0000-0000-0000-0000000000d2"
 DISP_TECNICO = "00000000-0000-0000-0000-0000000000d1"
 AYER = (datetime.now(UTC) - timedelta(days=1)).isoformat()
@@ -52,7 +53,8 @@ INSERT INTO lote (lote_id, lote_codigo, lote_descripcion, lote_area, pred_id, lo
   (12, 'L12', 'Lote 2 · Centro', 2, 1, DATE '2026-01-01', 1),
   (21, 'L21', 'Lote único', 2, 2, DATE '2026-01-01', 1);
 INSERT INTO dispositivo (disp_id, disp_plataforma) VALUES
-  ('00000000-0000-0000-0000-0000000000d1', 'android'), ('00000000-0000-0000-0000-0000000000d2', 'otro');
+  ('00000000-0000-0000-0000-0000000000d1', 'android'), ('00000000-0000-0000-0000-0000000000d2', 'otro'),
+  ('00000000-0000-0000-0000-0000000000d3', 'otro');
 """
 
 
@@ -271,3 +273,118 @@ def test_cosecha_con_datos_reales_incompletos_es_422(api: TestClient, bd: str, h
     )
 
     assert (r.status_code, r.json()["codigo"]) == (422, "VALIDACION")
+
+
+def _bruno() -> dict[str, str]:
+    return _token(BRUNO, RolCodigo.PRODUCTOR, DISP_BRUNO)
+
+
+def _version(accion: str, version: int, **cambios: Any) -> dict[str, Any]:
+    return {
+        "accion": accion,
+        "version_esperada": version,
+        "cambios": cambios,
+        "motivo": "Ajuste del productor",
+    }
+
+
+def test_listado_de_aplicaciones_solo_de_lotes_visibles_y_sin_anuladas(
+    api: TestClient, bd: str, h: SimpleNamespace
+) -> None:
+    propia = api.post(f"{P}/aplicaciones", headers=_ana(), json=_aplicacion(h, bd, lote_id=11)).json()
+    anulada = api.post(f"{P}/aplicaciones", headers=_ana(), json=_aplicacion(h, bd, lote_id=11)).json()
+    ajena = api.post(f"{P}/aplicaciones", headers=_bruno(), json=_aplicacion(h, bd, lote_id=21)).json()
+    r = api.post(
+        f"{P}/aplicaciones/{anulada['apli_registro_id']}/versiones",
+        headers=_ana(),
+        json=_version("anular", 1),
+    )
+    assert r.status_code == 201, r.json()
+
+    listado = api.get(f"{P}/aplicaciones", headers=_ana(), params={"lote_id": 11})
+
+    assert listado.status_code == 200
+    registros = [a["apli_registro_id"] for a in listado.json()["items"]]
+    assert propia["apli_registro_id"] in registros
+    assert anulada["apli_registro_id"] not in registros
+    assert ajena["apli_registro_id"] not in registros
+    assert all(a["lote_id"] == 11 for a in listado.json()["items"])
+    de_bruno = api.get(f"{P}/aplicaciones", headers=_bruno()).json()["items"]
+    assert [a["apli_registro_id"] for a in de_bruno] == [ajena["apli_registro_id"]]
+
+
+def test_corregir_aplicacion_crea_la_version_2_y_guarda_el_motivo(
+    api: TestClient, bd: str, h: SimpleNamespace
+) -> None:
+    creada = api.post(f"{P}/aplicaciones", headers=_ana(), json=_aplicacion(h, bd)).json()
+    registro = creada["apli_registro_id"]
+
+    r = api.post(
+        f"{P}/aplicaciones/{registro}/versiones",
+        headers=_ana(),
+        json=_version("corregir", 1, apli_dosis="3.5"),
+    )
+
+    assert r.status_code == 201, r.json()
+    assert (r.json()["apli_version"], r.json()["apli_dosis"], r.json()["apli_id"] != creada["apli_id"]) == (
+        2,
+        "3.5000",
+        True,
+    )
+    assert _contar(h, bd, "aplicacion_fitosanitaria", "apli_registro_id", registro) == 2
+    consulta = "SELECT oper_accion, oper_version, oper_clasificacion, oper_motivo FROM sigat.operacion_sync WHERE oper_registro_id = '{r}' ORDER BY oper_version"
+    assert h.consulta(bd, consulta.format(r=registro)) == [
+        ("crear", 1, "alta_nueva", None),
+        ("corregir", 2, "correccion", "Ajuste del productor"),
+    ]
+    vieja = api.post(
+        f"{P}/aplicaciones/{registro}/versiones", headers=_ana(), json=_version("corregir", 1, apli_dosis="4")
+    )
+    assert (vieja.status_code, vieja.json()["codigo"]) == (412, "VERSION_DESACTUALIZADA")
+    ajeno = api.post(
+        f"{P}/aplicaciones/{registro}/versiones",
+        headers=_bruno(),
+        json=_version("corregir", 2, apli_dosis="4"),
+    )
+    assert (ajeno.status_code, ajeno.json()["codigo"]) == (404, "REGISTRO_NO_ENCONTRADO")
+
+
+def test_anulada_no_admite_mas_versiones(api: TestClient, bd: str, h: SimpleNamespace) -> None:
+    registro = api.post(f"{P}/aplicaciones", headers=_ana(), json=_aplicacion(h, bd)).json()[
+        "apli_registro_id"
+    ]
+    anulada = api.post(f"{P}/aplicaciones/{registro}/versiones", headers=_ana(), json=_version("anular", 1))
+    assert (anulada.status_code, anulada.json()["anulada"]) == (201, True)
+
+    r = api.post(
+        f"{P}/aplicaciones/{registro}/versiones", headers=_ana(), json=_version("corregir", 2, apli_dosis="4")
+    )
+
+    assert (r.status_code, r.json()["codigo"]) == (409, "REGISTRO_ANULADO")
+
+
+def test_cosecha_se_completa_por_version_y_reabrir_choca_con_p04(
+    api: TestClient, bd: str, h: SimpleNamespace
+) -> None:
+    primera = api.post(f"{P}/cosechas", headers=_ana(), json=_cosecha(h, bd, lote_id=12)).json()
+    registro = primera["cose_registro_id"]
+
+    cerrada = api.post(
+        f"{P}/cosechas/{registro}/versiones",
+        headers=_ana(),
+        json=_version("corregir", 1, cose_fecha_real="2026-11-15", cose_volumen_real="480"),
+    )
+    assert cerrada.status_code == 201, cerrada.json()
+    assert (cerrada.json()["cose_version"], cerrada.json()["cose_volumen_real"]) == (2, "480.000")
+
+    assert api.post(f"{P}/cosechas", headers=_ana(), json=_cosecha(h, bd, lote_id=12)).status_code == 201
+    reabrir = api.post(
+        f"{P}/cosechas/{registro}/versiones",
+        headers=_ana(),
+        json=_version("corregir", 2, cose_fecha_real=None, cose_volumen_real=None),
+    )
+    assert (reabrir.status_code, reabrir.json()["codigo"]) == (409, "COSECHA_ABIERTA_EXISTENTE")
+    assert _contar(h, bd, "cosecha", "cose_registro_id", registro) == 2
+
+    listado = api.get(f"{P}/cosechas", headers=_ana(), params={"lote_id": 12}).json()["items"]
+    assert {c["cose_registro_id"]: c["cose_version"] for c in listado}[registro] == 2

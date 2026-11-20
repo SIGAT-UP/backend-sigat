@@ -30,6 +30,7 @@ class PuertoOperaciones(Protocol):
         version: int,
         datos: dict[str, object],
         t_captura: datetime,
+        motivo: str | None = None,
     ) -> int:
         """Inserta operacion_sync con el disp_id de la sesión web y devuelve oper_id."""
         ...

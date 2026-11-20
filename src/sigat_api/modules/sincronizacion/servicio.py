@@ -357,6 +357,7 @@ class RegistradorOperacionesEnLinea:
         version: int,
         datos: dict[str, object],
         t_captura: datetime,
+        motivo: str | None = None,
     ) -> int:
         if actor.disp_id is None:
             raise Prohibido("La sesión no tiene un dispositivo registrado.", codigo="SESION_SIN_DISPOSITIVO")
@@ -384,7 +385,7 @@ class RegistradorOperacionesEnLinea:
                 "version": version,
                 "hash": huella.calcular(contenido),
                 "clasificacion": clasificacion,
-                "motivo": None,
+                "motivo": motivo,
                 "t_captura": t_captura,
                 "deriva": None,
                 "payload": None,

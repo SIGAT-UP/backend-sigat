@@ -98,36 +98,56 @@ def _columnas_versionadas(entidad: str) -> tuple[frozenset[str], str]:
     raise ValueError(f"Entidad versionada no soportada: {entidad}")
 
 
-_SELECT_APLICACION = """
+_COLUMNAS_APLICACION_LEIDA = """
 SELECT a.apli_id, a.apli_registro_id, a.apli_version, a.lote_id, l.lote_descripcion, a.prof_id,
        coalesce(pf.prof_nombre, a.apli_producto_texto) AS producto,
        a.apli_dosis, ud.unid_simbolo AS dosis_unidad, a.apli_area_tratada, ua.unid_simbolo AS area_unidad,
        coalesce(a.apli_responsable_nombre, pe.pers_nombre || ' ' || pe.pers_apellido) AS responsable,
        a.apli_observaciones, a.apli_linaje AS linaje, a.apli_t_observacion AS t_observacion,
        a.apli_t_captura AS t_captura, a.apli_t_sincronizacion AS t_sincronizacion, a.apli_anulada AS anulada
-  FROM sigat.aplicacion_fitosanitaria a
+  FROM {origen} a
   JOIN sigat.lote l ON l.lote_id = a.lote_id
   JOIN sigat.unidad_medida ud ON ud.unid_id = a.apli_dosis_uni_id
   JOIN sigat.unidad_medida ua ON ua.unid_id = a.apli_area_uni_id
   LEFT JOIN sigat.producto_fitosanitario pf ON pf.prof_id = a.prof_id
   LEFT JOIN sigat.persona pe ON pe.pers_cc = a.pers_cc_responsable
- WHERE a.apli_registro_id = :r
- ORDER BY a.apli_version DESC
- LIMIT 1
 """
 
-_SELECT_COSECHA = """
+_COLUMNAS_COSECHA_LEIDA = """
 SELECT c.cose_id, c.cose_registro_id, c.cose_version, c.lote_id, l.lote_descripcion,
        c.cose_fecha_esperada, c.cose_volumen_esperado, c.cose_fecha_real, c.cose_volumen_real,
        u.unid_simbolo AS unidad, c.cose_metodo_registro, c.cose_observaciones,
        c.cose_linaje AS linaje, c.cose_t_observacion AS t_observacion, c.cose_anulada AS anulada
-  FROM sigat.cosecha c
+  FROM {origen} c
   JOIN sigat.lote l ON l.lote_id = c.lote_id
   JOIN sigat.unidad_medida u ON u.unid_id = c.cose_volumen_uni_id
- WHERE c.cose_registro_id = :r
- ORDER BY c.cose_version DESC
- LIMIT 1
 """
+
+_SELECT_APLICACION = (
+    _COLUMNAS_APLICACION_LEIDA.format(origen="sigat.aplicacion_fitosanitaria")
+    + " WHERE a.apli_registro_id = :r ORDER BY a.apli_version DESC LIMIT 1"
+)
+_SELECT_COSECHA = (
+    _COLUMNAS_COSECHA_LEIDA.format(origen="sigat.cosecha")
+    + " WHERE c.cose_registro_id = :r ORDER BY c.cose_version DESC LIMIT 1"
+)
+
+# Versión vigente de cada registro lógico, solo en lotes visibles para el actor (fn_lotes_visibles).
+_LISTADO_AUTORREPORTE = {
+    "aplicacion_fitosanitaria": (
+        _COLUMNAS_APLICACION_LEIDA,
+        "a",
+        "apli",
+        "(SELECT DISTINCT ON (apli_registro_id) * FROM sigat.aplicacion_fitosanitaria"
+        " ORDER BY apli_registro_id, apli_version DESC)",
+    ),
+    "cosecha": (
+        _COLUMNAS_COSECHA_LEIDA,
+        "c",
+        "cose",
+        "(SELECT DISTINCT ON (cose_registro_id) * FROM sigat.cosecha ORDER BY cose_registro_id, cose_version DESC)",
+    ),
+}
 
 Clave = tuple[datetime, UUID, int | None]
 
@@ -768,8 +788,29 @@ LIMIT :lim
             {"u": usua_id, "lote": lote_id, "lim": limite},
         )
 
-    async def autorreportes(self, entidad: str, usua_id: int, lote_id: int | None, cursor: str | None) -> Any:
-        raise NotImplementedError("Autorreportes")
+    async def autorreportes(
+        self, entidad: str, usua_id: int, lote_id: int | None, despues: Clave | None, limite: int
+    ) -> list[dict[str, Any]]:
+        """Versiones vigentes no anuladas, de la observación más reciente a la más antigua."""
+        columnas, alias, prefijo, vigentes = _LISTADO_AUTORREPORTE[entidad]
+        sql = (
+            columnas.format(origen=vigentes) + f" WHERE NOT {alias}.{prefijo}_anulada"  # noqa: S608
+            f"   AND {alias}.lote_id IN (SELECT lote_id FROM sigat.fn_lotes_visibles(:u))"
+            f"   AND (CAST(:lote_id AS integer) IS NULL OR {alias}.lote_id = CAST(:lote_id AS integer))"
+            "   AND "
+            + _DESPUES_DE.format(t=f"{alias}.{prefijo}_t_observacion", id=f"{alias}.{prefijo}_registro_id")
+            + f" ORDER BY {alias}.{prefijo}_t_observacion DESC, {alias}.{prefijo}_registro_id DESC LIMIT :lim"
+        )
+        return await self._filas(sql, {"u": usua_id, "lote_id": lote_id, "lim": limite, **_clave(despues)})
+
+    async def autorreporte_vigente(self, entidad: str, registro_id: UUID) -> dict[str, Any] | None:
+        """Última versión del registro lógico, con todas sus columnas (base de la versión siguiente)."""
+        prefijo, _ = _COLUMNAS_VERSION_SERVIDOR[entidad]
+        return await self._fila(
+            f"SELECT * FROM sigat.{entidad} WHERE {prefijo}_registro_id = :r"  # noqa: S608
+            f" ORDER BY {prefijo}_version DESC LIMIT 1",
+            {"r": registro_id},
+        )
 
     async def contar_por_revisar(self, usua_id: int) -> int:
         sql = """

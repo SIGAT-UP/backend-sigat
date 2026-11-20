@@ -1,4 +1,4 @@
-"""POST /aplicaciones y POST /cosechas (HU-01): reglas del alta en línea del productor."""
+"""Autorreportes web del productor: alta, versiones y listados de aplicaciones y cosechas (HU-01)."""
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -8,10 +8,11 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from sigat_api.compartido.errores import Conflicto, NoEncontrado, Prohibido, ReglaNegocio
+from sigat_api.compartido.errores import Conflicto, NoEncontrado, PreCondicionFallida, Prohibido, ReglaNegocio
 from sigat_api.compartido.tipos import Actor, ClasificacionOperacion, Cliente, RolCodigo
 from sigat_api.modules.registro import esquemas as e
-from sigat_api.modules.registro.servicio import ServicioRegistro
+from sigat_api.modules.registro.cursor import TAMANO_PAGINA
+from sigat_api.modules.registro.servicio import ServicioConsultaRegistro, ServicioRegistro
 from sigat_api.modules.registro.validador import ValidadorInvariantes
 from sigat_api.modules.sincronizacion.servicio import RegistradorOperacionesEnLinea
 
@@ -25,10 +26,22 @@ OPER_ID = 501
 class RepoFalso:
     def __init__(self) -> None:
         self.originales: dict[UUID, dict[str, Any]] = {}
+        self.vigentes: dict[UUID, dict[str, Any]] = {}
+        self.listado: list[dict[str, Any]] = []
+        self.consultas_listado: list[tuple[str, int, int | None, int]] = []
         self.insertadas: list[tuple[str, dict[str, Any]]] = []
 
     async def autorreporte_original(self, entidad: str, registro_id: UUID) -> dict[str, Any] | None:
         return self.originales.get(registro_id)
+
+    async def autorreporte_vigente(self, entidad: str, registro_id: UUID) -> dict[str, Any] | None:
+        return self.vigentes.get(registro_id)
+
+    async def autorreportes(
+        self, entidad: str, usua_id: int, lote_id: int | None, despues: Any, limite: int
+    ) -> list[dict[str, Any]]:
+        self.consultas_listado.append((entidad, usua_id, lote_id, limite))
+        return self.listado[:limite]
 
     async def insertar_version(self, entidad: str, fila: dict[str, Any]) -> UUID:
         self.insertadas.append((entidad, fila))
@@ -58,10 +71,11 @@ class OperacionesFalsas:
         self.registradas: list[dict[str, Any]] = []
 
     async def registrar_operacion_en_linea(self, actor: Actor, entidad: str, accion: str, registro_id: str,
-                                           version: int, datos: dict[str, object], t_captura: datetime) -> int:  # fmt: skip
+                                           version: int, datos: dict[str, object], t_captura: datetime,
+                                           motivo: str | None = None) -> int:  # fmt: skip
         self.registradas.append(
             {"entidad": entidad, "accion": accion, "registro_id": registro_id, "version": version,
-             "datos": datos, "t_captura": t_captura}
+             "datos": datos, "t_captura": t_captura, "motivo": motivo}
         )  # fmt: skip
         return OPER_ID
 
@@ -314,3 +328,150 @@ async def test_sin_dispositivo_en_la_sesion_no_se_registra_la_operacion() -> Non
             actor, "cosecha", "crear", str(uuid4()), 1, {}, AHORA
         )
     assert repo.filas == []
+
+
+def _vigente_aplicacion(registro_id: UUID, **cambios: Any) -> dict[str, Any]:
+    fila: dict[str, Any] = {
+        "apli_registro_id": registro_id, "apli_version": 1, "lote_id": LOTE, "prof_id": None,
+        "apli_producto_texto": "Cipermetrina", "apli_dosis": Decimal("2.0000"), "apli_dosis_uni_id": 3,
+        "apli_area_tratada": Decimal("1.2000"), "apli_area_uni_id": 2, "pers_cc_responsable": None,
+        "apli_responsable_nombre": "María Rodríguez", "apli_observaciones": None,
+        "apli_t_observacion": AHORA - timedelta(days=1), "apli_linaje": "autorreporte",
+        "apli_anulada": False, "usua_id": PRODUCTOR,
+    }  # fmt: skip
+    fila.update(cambios)
+    return fila
+
+
+def _vigente_cosecha(registro_id: UUID, **cambios: Any) -> dict[str, Any]:
+    fila: dict[str, Any] = {
+        "cose_registro_id": registro_id, "cose_version": 1, "lote_id": LOTE,
+        "cose_fecha_esperada": date(2026, 12, 15), "cose_volumen_esperado": Decimal("500.000"),
+        "cose_fecha_real": None, "cose_volumen_real": None, "cose_volumen_uni_id": 1,
+        "cose_metodo_registro": None, "cose_observaciones": None,
+        "cose_t_observacion": AHORA - timedelta(days=1), "cose_linaje": "autorreporte",
+        "cose_anulada": False, "usua_id": PRODUCTOR,
+    }  # fmt: skip
+    fila.update(cambios)
+    return fila
+
+
+def _version(accion: str = "corregir", version: int = 1, **cambios: Any) -> e.NuevaVersionAutorreporte:
+    return e.NuevaVersionAutorreporte(
+        accion=accion, version_esperada=version, cambios=cambios, motivo="Corrección del productor"
+    )
+
+
+@pytest.mark.regla
+async def test_corregir_aplicacion_inserta_la_version_siguiente_con_su_operacion() -> None:
+    servicio, repo, _, operaciones = _servicio()
+    registro = uuid4()
+    repo.vigentes[registro] = _vigente_aplicacion(registro)
+
+    await servicio.nueva_version_aplicacion(_actor(), registro, _version(apli_dosis="2.5"))
+
+    [operacion] = operaciones.registradas
+    assert (operacion["accion"], operacion["version"], operacion["motivo"]) == (
+        "corregir", 2, "Corrección del productor",
+    )  # fmt: skip
+    [(_, fila)] = repo.insertadas
+    assert (fila["apli_version"], fila["apli_dosis"], fila["apli_anulada"]) == (2, Decimal("2.5"), False)
+    assert fila["apli_t_observacion"] == AHORA - timedelta(days=1)
+    assert (fila["apli_linaje"], fila["oper_id"], fila["apli_t_captura"]) == ("autorreporte", OPER_ID, AHORA)
+
+
+@pytest.mark.regla
+async def test_completar_la_cosecha_real_es_una_correccion() -> None:
+    servicio, repo, _, _ = _servicio()
+    registro = uuid4()
+    repo.vigentes[registro] = _vigente_cosecha(registro)
+
+    await servicio.nueva_version_cosecha(
+        _actor(), registro, _version(cose_fecha_real="2026-12-16", cose_volumen_real="480")
+    )
+
+    [(_, fila)] = repo.insertadas
+    assert (fila["cose_version"], fila["cose_fecha_real"], fila["cose_volumen_real"]) == (
+        2, date(2026, 12, 16), Decimal("480"),
+    )  # fmt: skip
+
+
+@pytest.mark.regla
+async def test_anular_conserva_los_datos_y_guarda_el_motivo() -> None:
+    servicio, repo, _, operaciones = _servicio()
+    registro = uuid4()
+    repo.vigentes[registro] = _vigente_aplicacion(registro)
+
+    await servicio.nueva_version_aplicacion(_actor(), registro, _version("anular"))
+
+    [(_, fila)] = repo.insertadas
+    assert (fila["apli_anulada"], fila["apli_motivo_anulacion"]) == (True, "Corrección del productor")
+    assert fila["apli_dosis"] == Decimal("2.0000")
+    assert operaciones.registradas[0]["accion"] == "anular"
+
+
+@pytest.mark.regla
+@pytest.mark.parametrize(
+    ("vigente", "solicitud", "error", "codigo"),
+    [
+        ({"usua_id": 99}, _version(apli_dosis="3"), NoEncontrado, "REGISTRO_NO_ENCONTRADO"),
+        ({"apli_anulada": True}, _version(apli_dosis="3"), Conflicto, "REGISTRO_ANULADO"),
+        ({"apli_version": 2}, _version(apli_dosis="3"), PreCondicionFallida, "VERSION_DESACTUALIZADA"),
+        ({}, _version(lote_id=7), ReglaNegocio, "CAMPO_NO_MODIFICABLE"),
+        ({}, _version(apli_t_observacion="2026-01-01T00:00:00+00:00"), ReglaNegocio, "CAMPO_NO_MODIFICABLE"),
+        ({}, _version(), ReglaNegocio, "SIN_CAMBIOS"),
+        ({}, _version(apli_dosis="0"), ReglaNegocio, "VALOR_NO_VALIDO"),
+        ({}, _version("anular", apli_dosis="3"), ReglaNegocio, "VALOR_NO_VALIDO"),
+    ],
+    ids=[
+        "ajeno",
+        "anulado",
+        "version_vieja",
+        "lote",
+        "t_observacion",
+        "sin_cambios",
+        "dosis_0",
+        "anular_con_cambios",
+    ],
+)
+async def test_versiones_invalidas_no_registran_nada(
+    vigente: dict[str, Any], solicitud: e.NuevaVersionAutorreporte, error: type[Exception], codigo: str
+) -> None:
+    servicio, repo, _, operaciones = _servicio()
+    registro = uuid4()
+    repo.vigentes[registro] = _vigente_aplicacion(registro, **vigente)
+
+    with pytest.raises(error) as capturado:
+        await servicio.nueva_version_aplicacion(_actor(), registro, solicitud)
+
+    assert getattr(capturado.value, "codigo", None) == codigo
+    assert (operaciones.registradas, repo.insertadas) == ([], [])
+
+
+@pytest.mark.regla
+async def test_registro_inexistente_o_lote_ya_no_visible_responde_404() -> None:
+    servicio, repo, config, _ = _servicio()
+    registro = uuid4()
+    with pytest.raises(NoEncontrado):
+        await servicio.nueva_version_cosecha(_actor(), registro, _version(cose_volumen_esperado="1"))
+
+    repo.vigentes[registro] = _vigente_cosecha(registro)
+    config.visible = False
+    with pytest.raises(NoEncontrado):
+        await servicio.nueva_version_cosecha(_actor(), registro, _version(cose_volumen_esperado="1"))
+
+
+@pytest.mark.regla
+async def test_listados_paginan_y_filtran_por_el_actor_y_el_lote() -> None:
+    repo = RepoFalso()
+    repo.listado = [_aplicacion_vigente(uuid4()) for _ in range(TAMANO_PAGINA + 1)]
+    consulta = ServicioConsultaRegistro(repo)  # type: ignore[arg-type]
+
+    pagina = await consulta.aplicaciones(_actor(), LOTE, None)
+
+    assert len(pagina.items) == TAMANO_PAGINA
+    assert pagina.siguiente is not None
+    assert repo.consultas_listado == [("aplicacion_fitosanitaria", PRODUCTOR, LOTE, TAMANO_PAGINA + 1)]
+    repo.listado = [_cosecha_vigente(uuid4())]
+    cosechas = await consulta.cosechas(_actor(), None, None)
+    assert (len(cosechas.items), cosechas.siguiente) == (1, None)
