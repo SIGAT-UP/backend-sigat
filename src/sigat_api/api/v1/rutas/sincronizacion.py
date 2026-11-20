@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 
 from sigat_api.api.dependencias import requiere
 from sigat_api.api.fabricas import servicio_sincronizacion
@@ -14,10 +14,16 @@ Svc = Annotated[ServicioSincronizacion, Depends(servicio_sincronizacion)]
 Emisor = Annotated[Actor, Depends(requiere("sincronizacion.enviar"))]
 
 
-@router.post("/lotes", response_model=e.RespuestaLote, summary="Enviar un lote de operaciones idempotentes")
+@router.post(
+    "/lotes",
+    response_model=e.RespuestaLote,
+    status_code=status.HTTP_207_MULTI_STATUS,
+    summary="Enviar un lote de operaciones idempotentes",
+)
 async def enviar_lote(s: e.LoteSincronizacion, actor: Emisor, svc: Svc) -> e.RespuestaLote:
-    """Siempre 200 si el lote se pudo leer: el resultado de CADA operación va en ``resultados``.
-    403 solo si el disp_id no es el del token o el dispositivo está dado de baja."""
+    """207 Multi-Status siempre que el lote se pudo leer, se acepten todas, algunas o ninguna de sus
+    operaciones: el resultado de CADA una va en ``resultados``. El lote completo se rechaza solo con
+    401 (sin sesión), 403 (disp_id distinto al del token o dispositivo dado de baja) o 422 (cuerpo inválido)."""
     return await svc.recibir(actor, s)
 
 

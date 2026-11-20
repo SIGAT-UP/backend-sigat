@@ -18238,7 +18238,7 @@
     },
     "/api/v1/sincronizacion/lotes": {
       "post": {
-        "description": "Siempre 200 si el lote se pudo leer: el resultado de CADA operación va en ``resultados``.\n403 solo si el disp_id no es el del token o el dispositivo está dado de baja.",
+        "description": "207 Multi-Status siempre que el lote se pudo leer, se acepten todas, algunas o ninguna de sus\noperaciones: el resultado de CADA una va en ``resultados``. El lote completo se rechaza solo con\n401 (sin sesión), 403 (disp_id distinto al del token o dispositivo dado de baja) o 422 (cuerpo inválido).",
         "operationId": "enviar_lote_api_v1_sincronizacion_lotes_post",
         "parameters": [
           {
@@ -18271,7 +18271,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "207": {
             "content": {
               "application/json": {
                 "schema": {
