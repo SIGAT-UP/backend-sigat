@@ -21586,11 +21586,15 @@
             }
           },
           {
+            "deprecated": true,
+            "description": "Sin efecto: la bandeja devuelve siempre solo los avisos no leídos.",
             "in": "query",
             "name": "no_leidas",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
+              "deprecated": true,
+              "description": "Sin efecto: la bandeja devuelve siempre solo los avisos no leídos.",
               "title": "No Leidas",
               "type": "boolean"
             }
@@ -21692,7 +21696,7 @@
             "description": "Not Implemented"
           }
         },
-        "summary": "Mis avisos (más reciente primero)",
+        "summary": "Mi bandeja: avisos no leídos, más reciente primero",
         "tags": [
           "Mi cuenta"
         ]

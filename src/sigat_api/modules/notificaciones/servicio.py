@@ -1,6 +1,10 @@
 """Casos de uso de notificaciones."""
 
+import base64
+import binascii
+import json
 from datetime import UTC, datetime
+from typing import cast
 
 from sigat_api.compartido.errores import NoEncontrado, NoImplementado
 from sigat_api.compartido.esquemas import Pagina
@@ -30,18 +34,36 @@ def _a_notificacion(f: dict[str, object]) -> e.Notificacion:
     )
 
 
+def _codificar(fila: dict[str, object]) -> str:
+    creada = cast(datetime, fila["noti_creada_en"])
+    clave = json.dumps([creada.isoformat(), int(str(fila["noti_id"]))])
+    return base64.urlsafe_b64encode(clave.encode()).decode().rstrip("=")
+
+
+def _decodificar(cursor: str | None) -> tuple[datetime, int] | None:
+    """Un cursor ilegible se trata como «primera página», igual que antes del cambio de orden."""
+    if not cursor:
+        return None
+    try:
+        creada, noti_id = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        return datetime.fromisoformat(creada), int(noti_id)
+    except (binascii.Error, ValueError, TypeError):
+        return None
+
+
 class ServicioNotificaciones:
     """Implementa además ``identidad.puertos.PuertoAvisos`` (método ``emitir``)."""
 
     def __init__(self, repo: RepositorioNotificaciones) -> None:
         self._repo = repo
 
-    async def listar(self, actor: Actor, solo_no_leidas: bool, cursor: str | None) -> Pagina[e.Notificacion]:
-        """Más reciente primero. SOLO las del actor. ``cursor`` = el ``siguiente`` de la página anterior."""
-        antes_de = int(cursor) if cursor and cursor.isdigit() else None
-        filas = await self._repo.listar(actor.usua_id, solo_no_leidas, antes_de, TAMANO_PAGINA + 1)
+    async def listar(self, actor: Actor, cursor: str | None) -> Pagina[e.Notificacion]:
+        """Bandeja del actor: solo no leídas, más reciente primero (decisión del Owner, Sprint 3).
+        ``cursor`` = el ``siguiente`` de la página anterior."""
+        filas = await self._repo.listar(actor.usua_id, _decodificar(cursor), TAMANO_PAGINA + 1)
         items = [_a_notificacion(f) for f in filas[:TAMANO_PAGINA]]
-        siguiente = str(items[-1].noti_id) if len(filas) > TAMANO_PAGINA else None
+        ultima = filas[TAMANO_PAGINA - 1] if len(filas) > TAMANO_PAGINA else None
+        siguiente = _codificar(ultima) if ultima else None
         return Pagina[e.Notificacion](items=items, siguiente=siguiente)
 
     async def conteo(self, actor: Actor) -> e.ConteoNoLeidas:

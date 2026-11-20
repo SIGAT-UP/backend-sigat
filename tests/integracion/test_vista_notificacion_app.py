@@ -142,30 +142,57 @@ def test_un_aviso_por_fila_de_notificacion(bd: str, h: SimpleNamespace) -> None:
     )
 
 
-def test_la_bandeja_solo_devuelve_los_avisos_del_usuario(bd: str, h: SimpleNamespace) -> None:
+def test_la_bandeja_solo_devuelve_los_no_leidos_del_usuario(bd: str, h: SimpleNamespace) -> None:
     async def uso(repo: RepositorioNotificaciones) -> dict[str, Any]:
         return {
-            "ana": [f["noti_id"] for f in await repo.listar(ANA, False, None, 50)],
-            "ana_no_leidas": [f["noti_id"] for f in await repo.listar(ANA, True, None, 50)],
-            "ana_pagina_2": [f["noti_id"] for f in await repo.listar(ANA, False, AVISO_PENDIENTE, 50)],
-            "bruno": await repo.listar(BRUNO, False, None, 50),
+            "ana": [f["noti_id"] for f in await repo.listar(ANA, None, 50)],
+            "bruno": await repo.listar(BRUNO, None, 50),
             "conteo_ana": await repo.conteo_no_leidas(ANA),
             "conteo_bruno": await repo.conteo_no_leidas(BRUNO),
         }
 
     assert _con_repositorio(h, bd, uso) == {
-        "ana": [AVISO_PENDIENTE, AVISO_LEIDO],
-        "ana_no_leidas": [AVISO_PENDIENTE],
-        "ana_pagina_2": [AVISO_LEIDO],
+        "ana": [AVISO_PENDIENTE],
         "bruno": [],
         "conteo_ana": 1,
         "conteo_bruno": 0,
     }
 
 
+def test_paginacion_estable_con_empates_y_avisos_leidos_entre_paginas(bd: str, h: SimpleNamespace) -> None:
+    """Los avisos creados en una misma transacción comparten noti_creada_en: desempata noti_id."""
+
+    async def uso(repo: RepositorioNotificaciones) -> dict[str, Any]:
+        for i in range(5):
+            await repo.crear(BRUNO, "avisos_predio", f"Aviso {i}", "Cuerpo", f"prueba-{i}", None, None)
+        vistos: list[int] = []
+        primera = await repo.listar(BRUNO, None, 2)
+        vistos += [f["noti_id"] for f in primera]
+        for f in primera:
+            await repo.marcar_leida(BRUNO, int(f["noti_id"]), datetime.now(UTC))
+        despues = (primera[-1]["noti_creada_en"], int(primera[-1]["noti_id"]))
+        resto = await repo.listar(BRUNO, despues, 50)
+        vistos += [f["noti_id"] for f in resto]
+        return {"vistos": vistos, "bandeja": [f["noti_id"] for f in await repo.listar(BRUNO, None, 50)]}
+
+    resultado = _con_repositorio(h, bd, uso)
+    assert len(resultado["vistos"]) == 5
+    assert resultado["vistos"] == sorted(resultado["vistos"], reverse=True)
+    assert resultado["bandeja"] == resultado["vistos"][2:]
+
+
+def test_marcar_leido_saca_el_aviso_de_la_bandeja_sin_borrarlo(bd: str, h: SimpleNamespace) -> None:
+    async def uso(repo: RepositorioNotificaciones) -> dict[str, Any]:
+        marcado = await repo.marcar_leida(ANA, AVISO_PENDIENTE, datetime.now(UTC))
+        return {"marcado": marcado, "bandeja": await repo.listar(ANA, None, 50)}
+
+    assert _con_repositorio(h, bd, uso) == {"marcado": True, "bandeja": []}
+    assert h.consulta(bd, "SELECT count(*) FROM sigat.notificacion WHERE usua_id = 2") == [(2,)]
+
+
 def test_las_columnas_de_la_bandeja_conservan_su_forma(bd: str, h: SimpleNamespace) -> None:
     async def uso(repo: RepositorioNotificaciones) -> dict[str, Any]:
-        [fila] = await repo.listar(ANA, True, None, 50)
+        [fila] = await repo.listar(ANA, None, 50)
         return fila
 
     assert _con_repositorio(h, bd, uso) == {

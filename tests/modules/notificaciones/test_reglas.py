@@ -61,15 +61,13 @@ class RepoAvisosFalso:
         self.creados: list[dict[str, Any]] = []
 
     async def listar(
-        self, usua_id: int, solo_no_leidas: bool, antes_de: int | None, limite: int
+        self, usua_id: int, despues_de: tuple[datetime, int] | None, limite: int
     ) -> list[dict[str, Any]]:
         self.usuarios_consultados.append(usua_id)
-        filas = [f for f in self.filas if f["usua_id"] == usua_id]
-        if solo_no_leidas:
-            filas = [f for f in filas if f["noti_leida_en"] is None]
-        if antes_de is not None:
-            filas = [f for f in filas if f["noti_id"] < antes_de]
-        return sorted(filas, key=lambda f: int(str(f["noti_id"])), reverse=True)[:limite]
+        filas = [f for f in self.filas if f["usua_id"] == usua_id and f["noti_leida_en"] is None]
+        if despues_de is not None:
+            filas = [f for f in filas if (f["noti_creada_en"], f["noti_id"]) < despues_de]
+        return sorted(filas, key=lambda f: (f["noti_creada_en"], f["noti_id"]), reverse=True)[:limite]
 
     async def marcar_leida(self, usua_id: int, noti_id: int, momento: datetime) -> bool:
         for f in self.filas:
@@ -126,21 +124,23 @@ async def test_notificaciones_01() -> None:
         _aviso(3, 2, cate_codigo="sincronizacion"),  # de OTRO usuario
     ]
 
-    pagina = await ServicioNotificaciones(repo).listar(_actor(1), solo_no_leidas=False, cursor=None)
+    pagina = await ServicioNotificaciones(repo).listar(_actor(1), cursor=None)
 
     assert repo.usuarios_consultados == [1]  # filtra POR el actor, no "todos"
-    assert [n.noti_id for n in pagina.items] == [2, 1]  # más reciente primero
+    assert [n.noti_id for n in pagina.items] == [1]  # la bandeja solo trae no leídas (Owner, Sprint 3)
     assert 3 not in [n.noti_id for n in pagina.items]  # nunca el aviso ajeno
-    assert [n.leida for n in pagina.items] == [True, False]
-    assert pagina.items[1].destino is not None
-    assert pagina.items[1].destino.ruta == "/predios/9"
+    assert [n.leida for n in pagina.items] == [False]
+    assert pagina.items[0].destino is not None
+    assert pagina.items[0].destino.ruta == "/predios/9"
     assert pagina.siguiente is None
 
     # El repositorio real filtra en SQL por el dueño del aviso.
     con = ConexionFalsa()
-    await RepositorioNotificaciones(con).listar(1, False, None, 51)  # type: ignore[arg-type]
+    await RepositorioNotificaciones(con).listar(1, None, 51)  # type: ignore[arg-type]
     sql = _plano(con.consultas[0][0])
     assert "WHERE n.usua_id = :u" in sql
+    assert "AND n.no_leida" in sql
+    assert "ORDER BY n.noti_creada_en DESC, n.noti_id DESC" in sql
     assert con.consultas[0][1] is not None
     assert con.consultas[0][1]["u"] == 1
 
