@@ -5742,6 +5742,39 @@
             "description": "Nombre original del documento adjunto.",
             "title": "Documento"
           },
+          "documento_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Bytes"
+          },
+          "documento_mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Mime"
+          },
+          "documento_paginas": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Paginas"
+          },
           "lote_ids": {
             "items": {
               "type": "integer"
@@ -5755,6 +5788,14 @@
               "type": "string"
             },
             "title": "Lotes",
+            "type": "array"
+          },
+          "lotes_descripcion": {
+            "description": "Mismo orden que lotes.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Lotes Descripcion",
             "type": "array"
           },
           "lotes_ejecutados": {
@@ -5777,6 +5818,17 @@
             "format": "date-time",
             "title": "Plan Creada En",
             "type": "string"
+          },
+          "plan_documento_clase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Documento Clase"
           },
           "plan_estado": {
             "$ref": "#/components/schemas/EstadoPlanificacion"
@@ -5838,6 +5890,18 @@
               }
             ],
             "title": "Plan Id Origen"
+          },
+          "plan_motivo_rechazo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Solo en planificaciones rechazadas.",
+            "title": "Plan Motivo Rechazo"
           },
           "plan_observacion_respuesta": {
             "anyOf": [
@@ -5983,6 +6047,39 @@
             "description": "Nombre original del documento adjunto.",
             "title": "Documento"
           },
+          "documento_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Bytes"
+          },
+          "documento_mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Mime"
+          },
+          "documento_paginas": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Paginas"
+          },
           "lote_ids": {
             "items": {
               "type": "integer"
@@ -5996,6 +6093,14 @@
               "type": "string"
             },
             "title": "Lotes",
+            "type": "array"
+          },
+          "lotes_descripcion": {
+            "description": "Mismo orden que lotes.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Lotes Descripcion",
             "type": "array"
           },
           "lotes_ejecutados": {
@@ -6018,6 +6123,17 @@
             "format": "date-time",
             "title": "Plan Creada En",
             "type": "string"
+          },
+          "plan_documento_clase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Documento Clase"
           },
           "plan_estado": {
             "$ref": "#/components/schemas/EstadoPlanificacion"
@@ -6079,6 +6195,18 @@
               }
             ],
             "title": "Plan Id Origen"
+          },
+          "plan_motivo_rechazo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Solo en planificaciones rechazadas.",
+            "title": "Plan Motivo Rechazo"
           },
           "plan_observacion_respuesta": {
             "anyOf": [
@@ -18238,7 +18366,7 @@
     },
     "/api/v1/sincronizacion/lotes": {
       "post": {
-        "description": "Siempre 200 si el lote se pudo leer: el resultado de CADA operación va en ``resultados``.\n403 solo si el disp_id no es el del token o el dispositivo está dado de baja.",
+        "description": "207 Multi-Status siempre que el lote se pudo leer, se acepten todas, algunas o ninguna de sus\noperaciones: el resultado de CADA una va en ``resultados``. El lote completo se rechaza solo con\n401 (sin sesión), 403 (disp_id distinto al del token o dispositivo dado de baja) o 422 (cuerpo inválido).",
         "operationId": "enviar_lote_api_v1_sincronizacion_lotes_post",
         "parameters": [
           {
@@ -18271,7 +18399,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "207": {
             "content": {
               "application/json": {
                 "schema": {
@@ -21204,11 +21332,15 @@
             }
           },
           {
+            "deprecated": true,
+            "description": "Sin efecto: la bandeja devuelve siempre solo los avisos no leídos.",
             "in": "query",
             "name": "no_leidas",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
+              "deprecated": true,
+              "description": "Sin efecto: la bandeja devuelve siempre solo los avisos no leídos.",
               "title": "No Leidas",
               "type": "boolean"
             }
@@ -21310,7 +21442,7 @@
             "description": "Not Implemented"
           }
         },
-        "summary": "Mis avisos (más reciente primero)",
+        "summary": "Mi bandeja: avisos no leídos, más reciente primero",
         "tags": [
           "Mi cuenta"
         ]

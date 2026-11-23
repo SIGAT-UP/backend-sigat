@@ -41,6 +41,20 @@ class ValidadorInvariantes:
             return await self._validar_visita(op, actor)
         return await self._validar_lectura(op, actor)
 
+    async def validar_alta_autorreporte(
+        self, lote_id: int, t_observacion: datetime, ahora_servidor: datetime, actor: Actor
+    ) -> MotivoRechazo | None:
+        """Alta en línea de aplicación o cosecha. Sin tolerancia de reloj: la hora es la del servidor."""
+        if _LINAJE_POR_ROL.get(str(actor.rol)) != Linaje.AUTORREPORTE:
+            return MotivoRechazo.LINAJE_NO_PERMITIDO
+        if t_observacion > ahora_servidor:
+            return MotivoRechazo.FECHA_FUTURA
+        if not await self._configuracion.lote_visible(actor.usua_id, lote_id):
+            return MotivoRechazo.SIN_PERMISO_SOBRE_LOTE
+        if not await self._configuracion.lote_activo_en(lote_id, t_observacion):
+            return MotivoRechazo.LOTE_INACTIVO
+        return None
+
     async def _validar_visita(self, op: OperacionCampo, actor: Actor) -> MotivoRechazo | None:
         try:
             pred_id = int(op.datos["pred_id"])

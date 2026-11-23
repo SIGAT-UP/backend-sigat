@@ -18,7 +18,9 @@ SELECT v.plan_id,
        COALESCE(lo.codigos, '{}') AS lotes,
        COALESCE(lo.ids, '{}') AS lote_ids,
        v.plan_id_origen, v.usua_id_respuesta, v.respondio,
-       v.lotes_pendientes, v.lotes_ejecutados, v.lotes_no_ejecutados
+       v.lotes_pendientes, v.lotes_ejecutados, v.lotes_no_ejecutados,
+       v.plan_documento_clase, v.documento_mime, v.documento_bytes, v.documento_paginas,
+       COALESCE(lo.descripciones, '{}') AS lotes_descripcion, v.plan_motivo_rechazo
   FROM sigat.v_planificacion v
   JOIN sigat.planificacion p ON p.plan_id = v.plan_id
   JOIN sigat.usuario ud ON ud.usua_id = v.usua_id_destinatario
@@ -26,7 +28,8 @@ SELECT v.plan_id,
   LEFT JOIN LATERAL (
        SELECT array_agg(COALESCE(l.lote_codigo, CAST(l.lote_id AS text))
                         ORDER BY l.lote_codigo NULLS LAST, l.lote_id) AS codigos,
-              array_agg(l.lote_id ORDER BY l.lote_codigo NULLS LAST, l.lote_id) AS ids
+              array_agg(l.lote_id ORDER BY l.lote_codigo NULLS LAST, l.lote_id) AS ids,
+              array_agg(l.lote_descripcion ORDER BY l.lote_codigo NULLS LAST, l.lote_id) AS descripciones
          FROM sigat.planificacion_lote pl
          JOIN sigat.lote l ON l.lote_id = pl.lote_id
         WHERE pl.plan_id = v.plan_id

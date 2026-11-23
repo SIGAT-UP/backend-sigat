@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sigat_api.compartido.contratos import OperacionCampo, ResultadoAplicacion
-from sigat_api.compartido.errores import NoImplementado, Prohibido
+from sigat_api.compartido.errores import Prohibido
 from sigat_api.compartido.tipos import AccionSync, Actor, ClasificacionOperacion, EntidadSync, ResultadoSync
 from sigat_api.config import Configuracion
 from sigat_api.infra.reloj import Reloj
@@ -357,8 +357,40 @@ class RegistradorOperacionesEnLinea:
         version: int,
         datos: dict[str, object],
         t_captura: datetime,
+        motivo: str | None = None,
     ) -> int:
-        raise NoImplementado("Operación en línea")
+        if actor.disp_id is None:
+            raise Prohibido("La sesión no tiene un dispositivo registrado.", codigo="SESION_SIN_DISPOSITIVO")
+        contenido = {
+            "entidad": entidad,
+            "accion": accion,
+            "registro_id": registro_id,
+            "version": version,
+            "datos": datos,
+        }
+        # En línea solo se persiste lo que Registro ya validó; las decisiones de revisión son del sync.
+        clasificacion = (
+            ClasificacionOperacion.ALTA_NUEVA
+            if accion == AccionSync.CREAR
+            else ClasificacionOperacion.CORRECCION
+        )
+        return await self._repo.insertar_operacion(
+            {
+                "disp_id": actor.disp_id,
+                "cliente_id": uuid4(),
+                "usua_id": actor.usua_id,
+                "entidad": entidad,
+                "accion": accion,
+                "registro_id": UUID(registro_id),
+                "version": version,
+                "hash": huella.calcular(contenido),
+                "clasificacion": clasificacion,
+                "motivo": motivo,
+                "t_captura": t_captura,
+                "deriva": None,
+                "payload": None,
+            }
+        )
 
 
 class ServicioDispositivos:

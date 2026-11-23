@@ -1,10 +1,19 @@
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from sigat_api.compartido.contratos import OperacionCampo, ResultadoAplicacion
-from sigat_api.compartido.errores import Conflicto, NoEncontrado, NoImplementado, ReglaNegocio
+from sigat_api.compartido.errores import (
+    Conflicto,
+    NoEncontrado,
+    NoImplementado,
+    PreCondicionFallida,
+    ReglaNegocio,
+)
 from sigat_api.compartido.esquemas import Pagina
 from sigat_api.compartido.tipos import AccionSync, Actor, ClasificacionOperacion, EntidadSync, EstadoRevision
 from sigat_api.infra.reloj import Reloj
@@ -13,7 +22,7 @@ from sigat_api.modules.registro import esquemas as e
 from sigat_api.modules.registro.cursor import TAMANO_PAGINA, codificar, decodificar
 from sigat_api.modules.registro.dominio import MENSAJES, MotivoRechazo
 from sigat_api.modules.registro.puertos import PuertoConfiguracion, PuertoOperaciones
-from sigat_api.modules.registro.repositorio import RepositorioRegistro
+from sigat_api.modules.registro.repositorio import COLUMNAS_APLICACION, COLUMNAS_COSECHA, RepositorioRegistro
 from sigat_api.modules.registro.validador import ValidadorInvariantes
 
 LIMITE_ACTIVIDAD_RECIENTE = 10
@@ -136,24 +145,141 @@ class ServicioRegistro:
 
     # --- escrituras en línea de la web (pasan por el mismo camino) ---------------------------
     async def registrar_aplicacion(self, actor: Actor, s: e.NuevaAplicacion) -> e.Aplicacion:
-        """Productor desde la web (``registerApplication``). Construye una ``OperacionCampo`` con
-        ``PuertoOperaciones.registrar_operacion_en_linea`` y llama a ``aplicar``. Linaje autorreporte."""
-        raise NoImplementado("Registrar aplicación")
+        """Alta web del productor (HU-01). Reenviar el mismo ``apli_registro_id`` y contenido no duplica."""
+        propios = s.model_dump(exclude={"apli_registro_id", "t_observacion"})
+        propios["apli_t_observacion"] = s.t_observacion
+        await self._registrar_autorreporte(
+            actor, "aplicacion_fitosanitaria", "apli", s.apli_registro_id, s.lote_id, s.t_observacion, propios
+        )
+        fila = await self._repo.aplicacion_vigente(s.apli_registro_id)
+        if fila is None:
+            raise NoEncontrado("La aplicación no existe.", codigo="APLICACION_NO_ENCONTRADA")
+        return e.Aplicacion(**fila)
 
     async def registrar_cosecha(self, actor: Actor, s: e.NuevaCosecha) -> e.Cosecha:
-        """Web ``saveHarvest``: si ya existe la cosecha del lote, el front usa ``nueva_version_cosecha``."""
-        raise NoImplementado("Registrar cosecha")
+        """Alta web del productor. P-04 (una cosecha abierta por lote) la impone la BD -> 409."""
+        propios = s.model_dump(exclude={"cose_registro_id", "t_observacion"})
+        propios["cose_t_observacion"] = s.t_observacion
+        await self._registrar_autorreporte(
+            actor, "cosecha", "cose", s.cose_registro_id, s.lote_id, s.t_observacion, propios
+        )
+        fila = await self._repo.cosecha_vigente(s.cose_registro_id)
+        if fila is None:
+            raise NoEncontrado("La cosecha no existe.", codigo="COSECHA_NO_ENCONTRADA")
+        return e.Cosecha(**fila)
+
+    async def _registrar_autorreporte(
+        self,
+        actor: Actor,
+        entidad: str,
+        prefijo: str,
+        registro_id: UUID,
+        lote_id: int,
+        t_observacion: datetime,
+        propios: dict[str, Any],
+    ) -> None:
+        original = await self._repo.autorreporte_original(entidad, registro_id)
+        if original is not None:
+            if original["usua_id"] == actor.usua_id and all(original[k] == v for k, v in propios.items()):
+                return
+            raise Conflicto(
+                "Ya existe un registro con ese identificador y otro contenido.", codigo="REGISTRO_EXISTENTE"
+            )
+
+        ahora = self._reloj.ahora()
+        motivo = await self._validador.validar_alta_autorreporte(lote_id, t_observacion, ahora, actor)
+        if motivo == MotivoRechazo.SIN_PERMISO_SOBRE_LOTE:
+            raise NoEncontrado("El lote no existe.", codigo="LOTE_NO_ENCONTRADO")
+        if motivo is not None:
+            raise ReglaNegocio(MENSAJES[motivo], codigo=motivo.value)
+
+        oper_id = await self._operaciones.registrar_operacion_en_linea(
+            actor, entidad, AccionSync.CREAR.value, str(registro_id), 1, _serializable(propios), ahora
+        )
+        await self._repo.insertar_version(
+            entidad,
+            {
+                **propios,
+                f"{prefijo}_registro_id": registro_id,
+                f"{prefijo}_version": 1,
+                f"{prefijo}_linaje": dominio.linaje_de(actor).value,
+                f"{prefijo}_t_captura": ahora,
+                "usua_id": actor.usua_id,
+                "disp_id": actor.disp_id,
+                "oper_id": oper_id,
+            },
+        )
 
     async def nueva_version_aplicacion(
         self, actor: Actor, registro_id: UUID, s: e.NuevaVersionAutorreporte
     ) -> e.Aplicacion:
         """Solo el autor. ``version_esperada`` != vigente -> 412."""
-        raise NoImplementado("Corregir aplicación")
+        await self._nueva_version_autorreporte(actor, "aplicacion_fitosanitaria", "apli", registro_id, s)
+        fila = await self._repo.aplicacion_vigente(registro_id)
+        if fila is None:
+            raise _autorreporte_no_encontrado()
+        return e.Aplicacion(**fila)
 
     async def nueva_version_cosecha(
         self, actor: Actor, registro_id: UUID, s: e.NuevaVersionAutorreporte
     ) -> e.Cosecha:
-        raise NoImplementado("Corregir cosecha")
+        """Completar la cosecha real es una corrección. Reabrir una cosecha choca con P-04 (409)."""
+        await self._nueva_version_autorreporte(actor, "cosecha", "cose", registro_id, s)
+        fila = await self._repo.cosecha_vigente(registro_id)
+        if fila is None:
+            raise _autorreporte_no_encontrado()
+        return e.Cosecha(**fila)
+
+    async def _nueva_version_autorreporte(
+        self, actor: Actor, entidad: str, prefijo: str, registro_id: UUID, s: e.NuevaVersionAutorreporte
+    ) -> None:
+        vigente = await self._repo.autorreporte_vigente(entidad, registro_id)
+        if vigente is None or vigente["usua_id"] != actor.usua_id:
+            raise _autorreporte_no_encontrado()
+        if not await self._configuracion.lote_visible(actor.usua_id, int(vigente["lote_id"])):
+            raise _autorreporte_no_encontrado()
+        if vigente[f"{prefijo}_anulada"]:
+            raise Conflicto("El registro está anulado y no admite más versiones.", codigo="REGISTRO_ANULADO")
+        version = int(vigente[f"{prefijo}_version"])
+        if s.version_esperada != version:
+            raise PreCondicionFallida(
+                f"El registro cambió: la versión vigente es la {version}.", codigo="VERSION_DESACTUALIZADA"
+            )
+
+        no_editables = sorted(set(s.cambios) - _EDITABLES[entidad])
+        if no_editables:
+            raise ReglaNegocio(
+                f"No se pueden modificar: {', '.join(no_editables)}.", codigo="CAMPO_NO_MODIFICABLE"
+            )
+        propios = {c: vigente[c] for c in _COLUMNAS_PROPIAS[entidad]}
+        if s.accion == AccionSync.CORREGIR.value:
+            if not s.cambios:
+                raise ReglaNegocio("Indique al menos un cambio.", codigo="SIN_CAMBIOS")
+            propios = _corregidos(entidad, prefijo, registro_id, {**propios, **s.cambios})
+        elif s.cambios:
+            raise ReglaNegocio("Una anulación no lleva cambios.", codigo="VALOR_NO_VALIDO")
+
+        ahora = self._reloj.ahora()
+        oper_id = await self._operaciones.registrar_operacion_en_linea(
+            actor, entidad, s.accion, str(registro_id), version + 1, _serializable(s.cambios), ahora,
+            motivo=s.motivo,
+        )  # fmt: skip
+        anulada = s.accion == AccionSync.ANULAR.value
+        await self._repo.insertar_version(
+            entidad,
+            {
+                **propios,
+                f"{prefijo}_registro_id": registro_id,
+                f"{prefijo}_version": version + 1,
+                f"{prefijo}_linaje": vigente[f"{prefijo}_linaje"],
+                f"{prefijo}_t_captura": ahora,
+                f"{prefijo}_anulada": anulada,
+                f"{prefijo}_motivo_anulacion": s.motivo if anulada else None,
+                "usua_id": actor.usua_id,
+                "disp_id": actor.disp_id,
+                "oper_id": oper_id,
+            },
+        )
 
     async def corregir_lectura(self, actor: Actor, registro_id: UUID, s: e.CorreccionLectura) -> e.Lectura:
         """Agrónomo (web 'corregir', motivo obligatorio). Versión n+1 con mismo t_observacion y
@@ -447,10 +573,20 @@ class ServicioConsultaRegistro:
     async def aplicaciones(
         self, actor: Actor, lote_id: int | None, cursor: str | None
     ) -> Pagina[e.Aplicacion]:
-        raise NoImplementado("Aplicaciones")
+        """Versión vigente de cada aplicación de los lotes visibles (las anuladas no salen)."""
+        filas = await self._repo.autorreportes(
+            "aplicacion_fitosanitaria", actor.usua_id, lote_id, decodificar(cursor), TAMANO_PAGINA + 1
+        )
+        items = [e.Aplicacion(**f) for f in filas]
+        return _pagina(items, filas, lambda f: codificar(f["t_observacion"], f["apli_registro_id"]))
 
     async def cosechas(self, actor: Actor, lote_id: int | None, cursor: str | None) -> Pagina[e.Cosecha]:
-        raise NoImplementado("Cosechas")
+        """Versión vigente de cada cosecha de los lotes visibles (las anuladas no salen)."""
+        filas = await self._repo.autorreportes(
+            "cosecha", actor.usua_id, lote_id, decodificar(cursor), TAMANO_PAGINA + 1
+        )
+        items = [e.Cosecha(**f) for f in filas]
+        return _pagina(items, filas, lambda f: codificar(f["t_observacion"], f["cose_registro_id"]))
 
     async def actividad(
         self,
@@ -513,3 +649,46 @@ def _instante(valor: object) -> datetime:
     if isinstance(valor, datetime):
         return valor
     return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+
+
+def _serializable(valores: dict[str, Any]) -> dict[str, object]:
+    """JSON canónico para la huella de ``operacion_sync`` (RFC 8785 no admite Decimal ni fechas)."""
+    return {
+        clave: valor.isoformat()
+        if isinstance(valor, date)
+        else str(valor)
+        if isinstance(valor, Decimal)
+        else valor
+        for clave, valor in valores.items()
+    }
+
+
+_COLUMNAS_PROPIAS = {"aplicacion_fitosanitaria": COLUMNAS_APLICACION, "cosecha": COLUMNAS_COSECHA}
+# El lote y la fecha de observación no cambian entre versiones (RN-009; la BD lo impone).
+_EDITABLES = {
+    "aplicacion_fitosanitaria": COLUMNAS_APLICACION - {"lote_id", "apli_t_observacion"},
+    "cosecha": COLUMNAS_COSECHA - {"lote_id", "cose_t_observacion"},
+}
+_MODELO_ALTA: dict[str, type[e.NuevaAplicacion] | type[e.NuevaCosecha]] = {
+    "aplicacion_fitosanitaria": e.NuevaAplicacion,
+    "cosecha": e.NuevaCosecha,
+}
+
+
+def _corregidos(entidad: str, prefijo: str, registro_id: UUID, valores: dict[str, Any]) -> dict[str, Any]:
+    """Valida la versión corregida con las mismas reglas del alta y devuelve los valores normalizados."""
+    t_observacion = valores.pop(f"{prefijo}_t_observacion")
+    try:
+        modelo = _MODELO_ALTA[entidad](
+            **valores, **{f"{prefijo}_registro_id": registro_id, "t_observacion": t_observacion}
+        )
+    except ValidationError as error:
+        mensaje = error.errors()[0]["msg"].removeprefix("Value error, ")
+        raise ReglaNegocio(mensaje, codigo="VALOR_NO_VALIDO") from error
+    normalizados = modelo.model_dump(exclude={f"{prefijo}_registro_id", "t_observacion"})
+    normalizados[f"{prefijo}_t_observacion"] = t_observacion
+    return normalizados
+
+
+def _autorreporte_no_encontrado() -> NoEncontrado:
+    return NoEncontrado("El registro no existe.", codigo="REGISTRO_NO_ENCONTRADO")
