@@ -42,6 +42,12 @@ class Planificacion(Esquema):
     lotes_pendientes: int
     lotes_ejecutados: int
     lotes_no_ejecutados: int
+    plan_documento_clase: str | None = None
+    documento_mime: str | None = None
+    documento_bytes: int | None = None
+    documento_paginas: int | None = None
+    lotes_descripcion: list[str] = Field(default_factory=list, description="Mismo orden que lotes.")
+    plan_motivo_rechazo: str | None = Field(None, description="Solo en planificaciones rechazadas.")
 
 
 class ResultadoLote(Esquema):

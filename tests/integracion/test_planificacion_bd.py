@@ -318,7 +318,20 @@ def test_aceptar_y_rechazar_en_bd(bd: str, h: SimpleNamespace) -> None:
         aceptada = await svc.aceptar(ANA, p1.plan_id, e.Aceptacion(observacion="Aprobado por Ana"))
         assert aceptada.plan_estado == "aceptada"
         assert aceptada.plan_observacion_respuesta == "Aprobado por Ana"
+        assert aceptada.plan_motivo_rechazo is None
         assert aceptada.usua_id_respuesta == ANA.usua_id
+        assert len(aceptada.lotes_descripcion) == len(aceptada.lotes)
+        # F4/F5: la descripción de cada lote va en el mismo orden que su código (L11 -> "Lote 11").
+        assert aceptada.lotes
+        assert aceptada.lotes_descripcion == [f"Lote {codigo.removeprefix('L')}" for codigo in aceptada.lotes]
+        # Sin documento adjunto, los campos del documento llegan nulos (no se inventan valores).
+        assert (
+            aceptada.arch_id_documento,
+            aceptada.plan_documento_clase,
+            aceptada.documento_mime,
+            aceptada.documento_bytes,
+            aceptada.documento_paginas,
+        ) == (None, None, None, None, None)
 
         with pytest.raises(Conflicto) as ya_resp:
             await svc.aceptar(ANA, p1.plan_id, e.Aceptacion())
@@ -327,6 +340,7 @@ def test_aceptar_y_rechazar_en_bd(bd: str, h: SimpleNamespace) -> None:
         rechazada = await svc.rechazar(ANA, p2.plan_id, e.Rechazo(motivo="No es posible fumigar esta semana"))
         assert rechazada.plan_estado == "rechazada"
         assert rechazada.plan_observacion_respuesta == "No es posible fumigar esta semana"
+        assert rechazada.plan_motivo_rechazo == "No es posible fumigar esta semana"
         assert rechazada.usua_id_respuesta == ANA.usua_id
 
     correr(h, bd, prueba)

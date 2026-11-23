@@ -5742,6 +5742,39 @@
             "description": "Nombre original del documento adjunto.",
             "title": "Documento"
           },
+          "documento_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Bytes"
+          },
+          "documento_mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Mime"
+          },
+          "documento_paginas": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Paginas"
+          },
           "lote_ids": {
             "items": {
               "type": "integer"
@@ -5755,6 +5788,14 @@
               "type": "string"
             },
             "title": "Lotes",
+            "type": "array"
+          },
+          "lotes_descripcion": {
+            "description": "Mismo orden que lotes.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Lotes Descripcion",
             "type": "array"
           },
           "lotes_ejecutados": {
@@ -5777,6 +5818,17 @@
             "format": "date-time",
             "title": "Plan Creada En",
             "type": "string"
+          },
+          "plan_documento_clase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Documento Clase"
           },
           "plan_estado": {
             "$ref": "#/components/schemas/EstadoPlanificacion"
@@ -5838,6 +5890,18 @@
               }
             ],
             "title": "Plan Id Origen"
+          },
+          "plan_motivo_rechazo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Solo en planificaciones rechazadas.",
+            "title": "Plan Motivo Rechazo"
           },
           "plan_observacion_respuesta": {
             "anyOf": [
@@ -5983,6 +6047,39 @@
             "description": "Nombre original del documento adjunto.",
             "title": "Documento"
           },
+          "documento_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Bytes"
+          },
+          "documento_mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Mime"
+          },
+          "documento_paginas": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Paginas"
+          },
           "lote_ids": {
             "items": {
               "type": "integer"
@@ -5996,6 +6093,14 @@
               "type": "string"
             },
             "title": "Lotes",
+            "type": "array"
+          },
+          "lotes_descripcion": {
+            "description": "Mismo orden que lotes.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Lotes Descripcion",
             "type": "array"
           },
           "lotes_ejecutados": {
@@ -6018,6 +6123,17 @@
             "format": "date-time",
             "title": "Plan Creada En",
             "type": "string"
+          },
+          "plan_documento_clase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Documento Clase"
           },
           "plan_estado": {
             "$ref": "#/components/schemas/EstadoPlanificacion"
@@ -6079,6 +6195,18 @@
               }
             ],
             "title": "Plan Id Origen"
+          },
+          "plan_motivo_rechazo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Solo en planificaciones rechazadas.",
+            "title": "Plan Motivo Rechazo"
           },
           "plan_observacion_respuesta": {
             "anyOf": [
