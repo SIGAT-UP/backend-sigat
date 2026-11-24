@@ -1,6 +1,7 @@
 """Casos de uso de concepto y resúmenes. ``ServicioConcepto.reemitir`` implementa
 ``sincronizacion.puertos.PuertoConcepto``."""
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
@@ -65,6 +66,88 @@ def revision_pendiente(visitas_por_revisar: int) -> str | None:
     if visitas_por_revisar == 1:
         return "1 visita por revisar"
     return f"{visitas_por_revisar} visitas por revisar"
+
+
+@dataclass(frozen=True, slots=True)
+class DatosCultivo:
+    """Todo ``CultivoProductor`` salvo ``lotes_revisados`` (sin definición) y ``ultimo_mtd`` (sin
+    criterio para elegir un MTD entre varios lotes): ambos pendientes del Owner."""
+
+    cultivo: str | None
+    vigilancia_activa: bool
+    ultima_visita: datetime | None
+    ultima_aplicacion: datetime | None
+    lotes: list[e.LoteCultivo]
+
+
+@dataclass(frozen=True, slots=True)
+class InicioProductorDatos:
+    lotes: int
+    planificaciones_por_responder: int
+    ultima_visita: datetime | None
+
+
+def rango_trampas(trampas: int, primera: str | None, ultima: str | None) -> str | None:
+    """Informe de consumo §5.2 («Trampas del ICA: ICA-001 a ICA-004», origen
+    ``v_trampa_lote_vigente.tram_codigo``): códigos de la primera y la última trampa ubicadas hoy en
+    el lote, por número. Una sola trampa: su código. Ninguna: ``None``."""
+    if trampas <= 0 or primera is None:
+        return None
+    if trampas == 1 or ultima is None or ultima == primera:
+        return primera
+    return f"{primera} a {ultima}"
+
+
+def _mas_reciente(valores: list[datetime | None]) -> datetime | None:
+    presentes = [v for v in valores if v is not None]
+    return max(presentes) if presentes else None
+
+
+def datos_cultivo(filas: list[dict[str, Any]]) -> DatosCultivo:
+    """Arma el cultivo del productor a partir de las filas de ``RepositorioConcepto.cultivo_lotes``.
+
+    * ``cultivo``: la especie (``v_lote_app.cultivo``) cuando todos los lotes que la tienen comparten
+      una sola; si hay varias o ninguna, ``None`` (no se elige una).
+    * ``vigilancia_activa``: ``True`` si ALGÚN lote tiene periodo de trampeo abierto (definición por lote
+      de ``v_lote_app``). La agregación «alguno» es una interpretación PROVISIONAL, pendiente de
+      confirmación del Owner.
+    * ``ultima_visita`` / ``ultima_aplicacion``: la más reciente entre los lotes (PW01: ``max``)."""
+    lotes = [
+        e.LoteCultivo(
+            lote_id=f["lote_id"],
+            lote_descripcion=f["lote_descripcion"],
+            mtd=f["mtd"],
+            rango_trampas=rango_trampas(int(f["trampas"] or 0), f["primera_trampa"], f["ultima_trampa"]),
+            ultima_visita=f["ultima_visita"],
+            ultima_aplicacion=f["ultima_aplicacion"],
+            cosecha_esperada=f["cosecha_esperada"],
+            volumen_esperado=f["volumen_esperado"],
+            concepto=f["concepto"],
+        )
+        for f in filas
+    ]
+    especies = {f["cultivo"] for f in filas if f["cultivo"] is not None}
+    return DatosCultivo(
+        cultivo=especies.pop() if len(especies) == 1 else None,
+        vigilancia_activa=any(bool(f["vigilancia_activa"]) for f in filas),
+        ultima_visita=_mas_reciente([lote.ultima_visita for lote in lotes]),
+        ultima_aplicacion=_mas_reciente([lote.ultima_aplicacion for lote in lotes]),
+        lotes=lotes,
+    )
+
+
+def armar_cultivo(datos: DatosCultivo, lotes_revisados: int) -> e.CultivoProductor:
+    """``CultivoProductor`` completo. ``ultimo_mtd`` va en ``None``: el MTD de cada lote viaja en
+    ``lotes[].mtd`` y no hay criterio aprobado para elegir uno solo."""
+    return e.CultivoProductor(
+        cultivo=datos.cultivo,
+        vigilancia_activa=datos.vigilancia_activa,
+        lotes_revisados=lotes_revisados,
+        ultima_visita=datos.ultima_visita,
+        ultimo_mtd=None,
+        ultima_aplicacion=datos.ultima_aplicacion,
+        lotes=datos.lotes,
+    )
 
 
 class ServicioConcepto:
@@ -168,6 +251,26 @@ class ServicioConcepto:
         await self._exigir_lote_visible(actor, lote_id)
         return etapa_lote(await self._repo.etapa(lote_id, fecha, self._zona))
 
+    async def datos_cultivo(self, actor: Actor) -> DatosCultivo:
+        """Lotes activos y visibles del actor (``fn_lotes_visibles``) con sus indicadores (PW01/PW02).
+        Nunca incluye lotes ajenos; sin lotes devuelve una lista vacía."""
+        return datos_cultivo(await self._repo.cultivo_lotes(actor.usua_id))
+
     async def cultivo_productor(self, actor: Actor) -> e.CultivoProductor:
-        """Solo PRODUCTOR: sus lotes (predios de los que es dueño)."""
-        raise NoImplementado("Cultivo del productor")
+        """GET /productor/cultivo. Sigue respondiendo 501: ``lotes_revisados`` es obligatorio en el
+        contrato y no tiene definición (informe de consumo §9.1.3 y §9.4: el rótulo es erróneo, el
+        valor sería ``count(lectura_trampa)`` y no se define su alcance). Pendiente del Owner.
+        Cuando se defina: ``armar_cultivo(await self.datos_cultivo(actor), lotes_revisados)``."""
+        raise NoImplementado(
+            "Cultivo del productor: falta la definición oficial de lotes_revisados (pendiente del Owner)"
+        )
+
+    async def inicio_productor(self, actor: Actor) -> InicioProductorDatos:
+        """Bloque ``productor`` de GET /yo/inicio (PW01). ``ultimo_mtd`` no se incluye: no hay un
+        criterio aprobado para elegir un MTD entre varios lotes (pendiente del Owner)."""
+        datos = await self.datos_cultivo(actor)
+        return InicioProductorDatos(
+            lotes=len(datos.lotes),
+            planificaciones_por_responder=await self._repo.planificaciones_por_responder(actor.usua_id),
+            ultima_visita=datos.ultima_visita,
+        )

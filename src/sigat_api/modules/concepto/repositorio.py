@@ -15,8 +15,6 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from sigat_api.compartido.errores import NoImplementado
-
 # Fin del día ``:fecha`` en la zona institucional, como instante (timestamptz).
 _FIN_DEL_DIA = "((CAST(:fecha AS date) + 1)::timestamp AT TIME ZONE CAST(:zona AS text))"
 
@@ -74,6 +72,36 @@ SELECT r.lote_id, l.lote_descripcion, r.mtd, r.escenario, r.umbral, r.contraste,
   JOIN sigat.lote l ON l.lote_id = r.lote_id
   JOIN sigat.v_resumen_lote rl ON rl.lote_id = r.lote_id
  WHERE r.lote_id = :lote
+"""
+
+# PW01/PW02 (informe de consumo §5.1, §5.2): una fila por lote activo y visible del productor.
+# Todo sale de funciones ya filtradas por usuario (fn_lotes_visibles) o de vistas por lote:
+#   cultivo / vigilancia_activa        -> fn_lote_app (especie del lote; periodo de trampeo abierto)
+#   mtd / concepto                     -> fn_lote_resumen_app (MTD del periodo más reciente del lote)
+#   ultima_visita / ultima_aplicacion  -> v_resumen_lote (max visi_t_fin_obs / apli_t_observacion vigente)
+#   cosecha y volumen esperados        -> fn_cosecha_lote_vigente, solo si la cosecha sigue ABIERTA
+#                                         (PW01 «Próxima cosecha»; igual criterio que el resumen del lote)
+#   trampas (rango)                    -> v_trampa_lote_vigente + trampa, ordenadas por número (tram_numero)
+_CULTIVO_LOTES = """
+SELECT a.lote_id, a.lote_descripcion, a.cultivo, a.vigilancia_activa,
+       r.mtd, r.concepto, rl.ultima_visita, rl.ultima_aplicacion,
+       CASE WHEN cv.abierta THEN cv.cose_fecha_esperada END AS cosecha_esperada,
+       CASE WHEN cv.abierta THEN cv.cose_volumen_esperado END AS volumen_esperado,
+       tr.trampas::int AS trampas, tr.primera_trampa, tr.ultima_trampa
+  FROM sigat.fn_lote_app(:u) a
+  LEFT JOIN sigat.fn_lote_resumen_app(:u) r ON r.lote_id = a.lote_id
+  LEFT JOIN sigat.v_resumen_lote rl ON rl.lote_id = a.lote_id
+  LEFT JOIN sigat.fn_cosecha_lote_vigente(:u) cv ON cv.lote_id = a.lote_id
+  LEFT JOIN LATERAL (
+       SELECT count(*) AS trampas,
+              (array_agg(t.tram_codigo ORDER BY t.tram_numero NULLS LAST, t.tram_codigo))[1] AS primera_trampa,
+              (array_agg(t.tram_codigo ORDER BY t.tram_numero DESC NULLS LAST, t.tram_codigo DESC))[1]
+                AS ultima_trampa
+         FROM sigat.v_trampa_lote_vigente v
+         JOIN sigat.trampa t ON t.tram_id = v.tram_id
+        WHERE v.lote_id = a.lote_id
+  ) tr ON true
+ ORDER BY a.lote_codigo NULLS LAST, a.lote_id
 """
 
 
@@ -282,5 +310,19 @@ SELECT (SELECT fe.feno_descripcion FROM sigat.fenologia fe
             raise RuntimeError("No se pudo insertar el concepto de aptitud")
         return int(conc_id)
 
-    async def cultivo_productor(self, usua_id: int) -> dict[str, Any]:
-        raise NoImplementado("Cultivo del productor")
+    # ------------------------------------------------------------------ productor (PW01 / PW02)
+    async def cultivo_lotes(self, usua_id: int) -> list[dict[str, Any]]:
+        """Lotes activos y visibles del usuario con sus indicadores (``_CULTIVO_LOTES``)."""
+        return await self._filas(_CULTIVO_LOTES, {"u": usua_id})
+
+    async def planificaciones_por_responder(self, usua_id: int) -> int:
+        """Planificaciones dirigidas al usuario que siguen en ``pendiente``: las únicas que puede
+        aceptar o rechazar (misma regla que ``ServicioPlanificacion.aceptar`` / ``rechazar``)."""
+        total = await self._con.scalar(
+            text(
+                "SELECT count(*) FROM sigat.planificacion"
+                " WHERE usua_id_destinatario = :u AND plan_estado = 'pendiente'"
+            ),
+            {"u": usua_id},
+        )
+        return int(total or 0)
