@@ -18,14 +18,19 @@ Extraídos del código en el cierre del Sprint 2 backend (seguían siendo coment
    `configuracion.servicio.ServicioPaqueteCampo.generar`; `verificar_archivo` →
    `imagenes.servicio.ServicioArchivos`; `enviar_correo` → `infra.correo.enviar`.
    Arranque: `app.run_worker_async(concurrency=cfg.cola_concurrencia)`.
-2. **Bloques nulos del inicio** — `api/v1/rutas/yo.py`: los bloques `tecnico` /
-   `productor` / `agronomo` de `InicioResumen` van en `null` (nunca valores inventados)
-   hasta que sus módulos estén implementados.
+2. **Bloques nulos del inicio** — `api/v1/rutas/yo.py`: el bloque `tecnico` de
+   `InicioResumen` va en `null` (nunca valores inventados) hasta que su módulo esté
+   implementado. El bloque `productor` ya se calcula (lotes, planificaciones por responder,
+   última visita), salvo `ultimo_mtd`, que va en `null`: no hay criterio aprobado para elegir
+   un MTD entre varios lotes del productor (pendiente del Owner).
 3. **Indicadores de lote sin fuente en la BD** — `configuracion.servicio`: no existe
    vista ni función en la BD que calcule los campos obligatorios de `IndicadoresLote`;
    el bloque va en `null` (lo admite el esquema). Depende de la BD (ver `bd/CAMBIOS.md`).
 4. **Foto de perfil** — `identidad.servicio`: `foto_url=None` hasta que el módulo de
    imágenes implemente la URL firmada.
+5. **Cultivo del productor** — `GET /productor/cultivo` sigue respondiendo 501: el campo
+   obligatorio `lotes_revisados` no tiene definición oficial (informe de consumo §9.1.3 y §9.4).
+   Los demás datos ya se calculan en `ServicioConcepto.datos_cultivo`; falta solo esa definición.
 
 ## Reglas sin implementación (backlog de pruebas)
 

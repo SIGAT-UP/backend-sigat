@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from sigat_api.api.fabricas import (
+    servicio_concepto,
     servicio_lotes,
     servicio_notificaciones,
     servicio_perfil,
@@ -45,6 +46,8 @@ def test_inicio_agronomo_devuelve_indicadores(cliente: TestClient) -> None:
     cliente.app.dependency_overrides[servicio_revision] = lambda: mock_revision
     cliente.app.dependency_overrides[servicio_planificacion] = lambda: mock_planif
     cliente.app.dependency_overrides[servicio_lotes] = lambda: mock_lotes
+    mock_concepto = AsyncMock()
+    cliente.app.dependency_overrides[servicio_concepto] = lambda: mock_concepto
 
     token = _generar_token(RolCodigo.AGRONOMO_SUPERVISOR, usua_id=10)
 
@@ -63,6 +66,7 @@ def test_inicio_agronomo_devuelve_indicadores(cliente: TestClient) -> None:
     }
     assert datos["tecnico"] is None
     assert datos["productor"] is None
+    mock_concepto.inicio_productor.assert_not_called()
 
 
 def test_inicio_otro_rol_no_incluye_bloque_agronomo(cliente: TestClient) -> None:
@@ -77,6 +81,8 @@ def test_inicio_otro_rol_no_incluye_bloque_agronomo(cliente: TestClient) -> None
     cliente.app.dependency_overrides[servicio_revision] = lambda: mock_revision
     cliente.app.dependency_overrides[servicio_planificacion] = lambda: mock_planif
     cliente.app.dependency_overrides[servicio_lotes] = lambda: mock_lotes
+    mock_concepto = AsyncMock()
+    cliente.app.dependency_overrides[servicio_concepto] = lambda: mock_concepto
 
     token = _generar_token(RolCodigo.ADMINISTRADOR, usua_id=1)
 
@@ -91,6 +97,7 @@ def test_inicio_otro_rol_no_incluye_bloque_agronomo(cliente: TestClient) -> None
     mock_planif.contar_pendientes.assert_not_called()
     mock_planif.contar_en_curso.assert_not_called()
     mock_lotes.contar_sobre_umbral.assert_not_called()
+    mock_concepto.inicio_productor.assert_not_called()
 
 
 def test_inicio_sin_token_da_401(cliente: TestClient) -> None:
