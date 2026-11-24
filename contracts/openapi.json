@@ -21075,7 +21075,7 @@
     },
     "/api/v1/yo/inicio": {
       "get": {
-        "description": "Fecha, «datos al» y avisos sin leer.\n\nLos bloques ``tecnico`` / ``productor`` / ``agronomo`` van en ``null`` (nunca valores\ninventados) hasta que sus módulos estén implementados: ver CHANGELOG.md, «Pendientes\ntécnicos».",
+        "description": "Fecha, «datos al» y avisos sin leer.\n\nSolo viene el bloque del rol del actor; el de ``tecnico`` sigue en ``null`` (nunca valores\ninventados) hasta que su módulo esté implementado: ver CHANGELOG.md, «Pendientes técnicos».",
         "operationId": "inicio_api_v1_yo_inicio_get",
         "parameters": [
           {

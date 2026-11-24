@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from sigat_api.api.dependencias import ActorDep
 from sigat_api.api.fabricas import (
+    servicio_concepto,
     servicio_lotes,
     servicio_notificaciones,
     servicio_perfil,
@@ -19,6 +20,7 @@ from sigat_api.api.v1.comunes import ERRORES, Cursor
 from sigat_api.compartido.esquemas import Pagina
 from sigat_api.compartido.tipos import RolCodigo
 from sigat_api.config import obtener_configuracion
+from sigat_api.modules.concepto.servicio import ServicioConcepto
 from sigat_api.modules.configuracion.servicio import ServicioLotes
 from sigat_api.modules.identidad import esquemas as ei
 from sigat_api.modules.identidad.servicio import ServicioPerfil
@@ -33,17 +35,22 @@ Notis = Annotated[ServicioNotificaciones, Depends(servicio_notificaciones)]
 Revision = Annotated[ServicioRevision, Depends(servicio_revision)]
 Planificacion = Annotated[ServicioPlanificacion, Depends(servicio_planificacion)]
 Lotes = Annotated[ServicioLotes, Depends(servicio_lotes)]
+Concepto = Annotated[ServicioConcepto, Depends(servicio_concepto)]
 
 
 @router.get("/inicio", response_model=c.InicioResumen, summary="Resumen de la pantalla de inicio de mi rol")
 async def inicio(
-    actor: ActorDep, notis: Notis, revision: Revision, planificacion: Planificacion, lotes: Lotes
+    actor: ActorDep,
+    notis: Notis,
+    revision: Revision,
+    planificacion: Planificacion,
+    lotes: Lotes,
+    concepto: Concepto,
 ) -> c.InicioResumen:
     """Fecha, «datos al» y avisos sin leer.
 
-    Los bloques ``tecnico`` / ``productor`` / ``agronomo`` van en ``null`` (nunca valores
-    inventados) hasta que sus módulos estén implementados: ver CHANGELOG.md, «Pendientes
-    técnicos».
+    Solo viene el bloque del rol del actor; el de ``tecnico`` sigue en ``null`` (nunca valores
+    inventados) hasta que su módulo esté implementado: ver CHANGELOG.md, «Pendientes técnicos».
     """
     cfg = obtener_configuracion()
     ahora = datetime.now(UTC)
@@ -58,11 +65,24 @@ async def inicio(
             lotes_sobre_umbral=await lotes.contar_sobre_umbral(actor),
         )
 
+    # PW01: lotes activos visibles, planificaciones por responder y última visita del técnico.
+    # ``ultimo_mtd`` va en null: no hay criterio aprobado para elegir un MTD entre varios lotes.
+    productor: c.InicioProductor | None = None
+    if actor.rol == RolCodigo.PRODUCTOR:
+        datos = await concepto.inicio_productor(actor)
+        productor = c.InicioProductor(
+            lotes=datos.lotes,
+            planificaciones_por_responder=datos.planificaciones_por_responder,
+            ultimo_mtd=None,
+            ultima_visita=datos.ultima_visita,
+        )
+
     return c.InicioResumen(
         rol=actor.rol,
         fecha=ahora.astimezone(ZoneInfo(cfg.zona_horaria_predeterminada)).date(),
         datos_al=ahora,
         notificaciones_no_leidas=(await notis.conteo(actor)).no_leidas,
+        productor=productor,
         agronomo=agronomo,
     )
 
